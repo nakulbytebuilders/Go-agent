@@ -1,0 +1,305 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>WinSentinel - Windows Background Telemetry Agent</title>
+  <!-- Google Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <!-- Chart.js CDN -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <!-- Lucide Icons CDN -->
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="app-container">
+    <!-- Sidebar Navigation -->
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="brand-icon">
+          <i data-lucide="shield-check"></i>
+        </div>
+        <div class="brand-text">
+          <h2>WinSentinel</h2>
+          <span>Go Agent Service v1.0</span>
+        </div>
+      </div>
+
+      <nav class="nav-menu">
+        <a href="#overview" class="nav-item active" data-tab="overview">
+          <i data-lucide="layout-dashboard"></i>
+          <span>Dashboard</span>
+        </a>
+        <a href="#active-app" class="nav-item" data-tab="active-app">
+          <i data-lucide="app-window"></i>
+          <span>Active Window Tracker</span>
+        </a>
+        <a href="#screenshots" class="nav-item" data-tab="screenshots">
+          <i data-lucide="camera"></i>
+          <span>Screen Captures</span>
+        </a>
+        <a href="#processes" class="nav-item" data-tab="processes">
+          <i data-lucide="cpu"></i>
+          <span>Process Manager</span>
+        </a>
+        <a href="#storage" class="nav-item" data-tab="storage">
+          <i data-lucide="database"></i>
+          <span>Telemetry Logs</span>
+        </a>
+      </nav>
+
+      <div class="agent-control-card">
+        <div class="agent-status-header">
+          <span class="status-indicator online" id="statusIndicator"></span>
+          <span class="status-text" id="statusText">Agent Active</span>
+        </div>
+        <div class="agent-meta">
+          <p>Uptime: <strong id="agentUptime">0s</strong></p>
+          <p>Samples: <strong id="agentSamples">0</strong></p>
+        </div>
+        <div class="control-buttons">
+          <button id="btnStartAgent" class="btn btn-primary" disabled>
+            <i data-lucide="play"></i> Start
+          </button>
+          <button id="btnStopAgent" class="btn btn-danger">
+            <i data-lucide="square"></i> Stop
+          </button>
+        </div>
+      </div>
+    </aside>
+
+    <!-- Main Content Area -->
+    <main class="main-content">
+      <!-- Top Bar Header -->
+      <header class="topbar">
+        <div class="topbar-title">
+          <h1 id="pageTitle">System Overview & Telemetry</h1>
+          <p id="pageSubtitle">Real-time Win32 internal API data stream</p>
+        </div>
+        <div class="topbar-actions">
+          <button id="btnExportData" class="btn btn-secondary">
+            <i data-lucide="download"></i> Export Data
+          </button>
+          <div class="live-badge">
+            <span class="pulse-dot"></span> LIVE WS STREAM
+          </div>
+        </div>
+      </header>
+
+      <!-- Active Foreground Window Hero Strip -->
+      <div class="hero-active-window-card">
+        <div class="hero-icon">
+          <i data-lucide="monitor"></i>
+        </div>
+        <div class="hero-info">
+          <span class="label">CURRENTLY ACTIVE FOREGROUND APPLICATION</span>
+          <h3 id="currentAppTitle">Loading foreground window...</h3>
+          <div class="hero-tags">
+            <span class="tag" id="currentProcessName"><i data-lucide="terminal"></i> unknown.exe</span>
+            <span class="tag" id="currentPID"><i data-lucide="hash"></i> PID: --</span>
+            <span class="tag" id="userIdleState"><i data-lucide="clock"></i> User Active</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Quick Metrics Cards Grid -->
+      <div class="metrics-grid">
+        <div class="metric-card cyan">
+          <div class="metric-header">
+            <span>CPU Usage</span>
+            <i data-lucide="cpu"></i>
+          </div>
+          <div class="metric-body">
+            <h2 id="valCpu">0%</h2>
+            <div class="progress-bar-bg"><div class="progress-bar-fill" id="barCpu" style="width: 0%"></div></div>
+          </div>
+          <div class="metric-footer">Win32 Delta Sample Rate: 1s</div>
+        </div>
+
+        <div class="metric-card purple">
+          <div class="metric-header">
+            <span>RAM Memory</span>
+            <i data-lucide="hard-drive"></i>
+          </div>
+          <div class="metric-body">
+            <h2 id="valRam">0%</h2>
+            <span class="sub-val" id="valRamSub">0 / 0 GB Used</span>
+            <div class="progress-bar-bg"><div class="progress-bar-fill" id="barRam" style="width: 0%"></div></div>
+          </div>
+          <div class="metric-footer">GlobalMemoryStatusEx API</div>
+        </div>
+
+        <div class="metric-card emerald">
+          <div class="metric-header">
+            <span>Disk Storage (C:\)</span>
+            <i data-lucide="disc"></i>
+          </div>
+          <div class="metric-body">
+            <h2 id="valDisk">0%</h2>
+            <span class="sub-val" id="valDiskSub">0 / 0 GB Used</span>
+            <div class="progress-bar-bg"><div class="progress-bar-fill" id="barDisk" style="width: 0%"></div></div>
+          </div>
+          <div class="metric-footer">GetDiskFreeSpaceExW API</div>
+        </div>
+
+        <div class="metric-card amber">
+          <div class="metric-header">
+            <span>Power & Battery</span>
+            <i data-lucide="zap"></i>
+          </div>
+          <div class="metric-body">
+            <h2 id="valPower">AC Power</h2>
+            <span class="sub-val" id="valBatterySub">100% Plugged In</span>
+          </div>
+          <div class="metric-footer">GetSystemPowerStatus API</div>
+        </div>
+      </div>
+
+      <!-- Tab Sections -->
+      <!-- Overview Section -->
+      <section id="tab-overview" class="tab-section active">
+        <div class="charts-row">
+          <div class="chart-card flex-2">
+            <div class="chart-card-header">
+              <h3>Real-Time Performance History (CPU & RAM)</h3>
+              <span>Live streaming per second</span>
+            </div>
+            <div class="chart-container">
+              <canvas id="perfChart"></canvas>
+            </div>
+          </div>
+
+          <div class="chart-card flex-1">
+            <div class="chart-card-header">
+              <h3>Application Usage Breakdown</h3>
+              <span>Total app time distribution</span>
+            </div>
+            <div class="chart-container">
+              <canvas id="appPieChart"></canvas>
+            </div>
+          </div>
+
+          <div class="chart-card flex-1">
+            <div class="chart-card-header">
+              <h3>Website Usage Breakdown</h3>
+              <span>Browser domain time distribution</span>
+            </div>
+            <div class="chart-container">
+              <canvas id="websitePieChart"></canvas>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Active Window Tracker Tab -->
+      <section id="tab-active-app" class="tab-section">
+        <div class="panel-card">
+          <div class="panel-header">
+            <h3>Active Window Activity History</h3>
+            <p>Monitored via <code>GetForegroundWindow</code> & <code>GetWindowTextW</code></p>
+          </div>
+          <div class="table-responsive">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>Timestamp</th>
+                  <th>Application</th>
+                  <th>Window Title</th>
+                  <th>PID</th>
+                  <th>Duration</th>
+                </tr>
+              </thead>
+              <tbody id="appActivityTableBody">
+                <tr><td colspan="5" class="empty-state">No activity logs recorded yet.</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- Processes Manager Tab -->
+      <section id="tab-processes" class="tab-section">
+        <div class="panel-card">
+          <div class="panel-header">
+            <h3>Top Memory Consuming Processes</h3>
+            <p>Monitored via <code>EnumProcesses</code> & <code>GetProcessMemoryInfo</code> (Working Set Size)</p>
+          </div>
+          <div class="table-responsive">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>PID</th>
+                  <th>Process Name</th>
+                  <th>Memory Working Set (MB)</th>
+                  <th>Share %</th>
+                </tr>
+              </thead>
+              <tbody id="processTableBody">
+                <tr><td colspan="4" class="empty-state">Loading processes...</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- Screen Captures Gallery Tab -->
+      <section id="tab-screenshots" class="tab-section">
+        <div class="panel-card">
+          <div class="panel-header" style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 16px;">
+            <div>
+              <h3>Automated Screen Captures</h3>
+              <p>Automatic background desktop screen capture schedule</p>
+            </div>
+            <div style="display: flex; align-items: center; gap: 10px;">
+              <label for="selectScreenshotInterval" style="font-size: 0.85rem; font-weight: 600; color: var(--text-secondary);">Capture Frequency:</label>
+              <select id="selectScreenshotInterval" class="form-select" style="background: rgba(18, 26, 43, 0.9); color: var(--text-primary); border: 1px solid var(--border-color-glow); padding: 8px 14px; border-radius: var(--radius-sm); font-size: 0.85rem; font-weight: 600; outline: none; cursor: pointer;">
+                <option value="60000" selected>1 Screenshot Every 1 Minute</option>
+                <option value="300000">1 Screenshot Every 5 Minutes</option>
+                <option value="600000">1 Screenshot Every 10 Minutes</option>
+                <option value="900000">1 Screenshot Every 15 Minutes</option>
+                <option value="0">Disabled (Pause Captures)</option>
+              </select>
+            </div>
+          </div>
+          <div class="screenshot-grid" id="screenshotGrid">
+            <div class="empty-state">No screen captures recorded yet.</div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Storage & Logs Tab -->
+      <section id="tab-storage" class="tab-section">
+        <div class="panel-card">
+          <div class="panel-header">
+            <h3>Telemetry Time-Series Logs</h3>
+            <p>Stored locally in time-series database format</p>
+          </div>
+          <div class="table-responsive">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>Time</th>
+                  <th>CPU %</th>
+                  <th>RAM (Used/Total)</th>
+                  <th>Disk %</th>
+                  <th>Active App</th>
+                  <th>Idle Status</th>
+                </tr>
+              </thead>
+              <tbody id="metricsTableBody">
+                <tr><td colspan="6" class="empty-state">Loading metrics history...</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+    </main>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

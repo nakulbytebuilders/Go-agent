@@ -1,0 +1,51 @@
+server:
+  api_url: "http://monitor-cloudd.test/api"
+  agent_id: "225e946a-9035-4051-9b12-a3fc03efe73f"
+  api_key: "b39be937-5ce7-4935-9868-51da32584637"
+  heartbeat_interval_sec: 15
+  employee_id: "03d06c36-3882-4976-905c-864b2975c065"
+  machine_name: "rushil-laptop"
+
+web_server:
+  enabled: true
+  host: "0.0.0.0"
+  port: 8080
+  auto_open: false
+
+database:
+  path: "data/agent.db"
+  max_open_conns: 1
+  max_idle_conns: 1
+
+logger:
+  dir: "logs"
+  level: "info"
+  max_size_mb: 10
+  max_backups: 5
+  max_age_days: 30
+  compress: true
+
+services:
+  appTracker: true
+  browserTracker: true
+  screenshot: true
+  input: true
+  sync: true
+  queue: true
+
+app_tracker:
+  poll_interval_sec: 2
+
+browser_tracker:
+  poll_interval_sec: 3
+
+screenshot:
+  interval_sec: 30
+  quality: 80
+
+input:
+  poll_interval_sec: 5
+
+sync:
+  interval_sec: 30
+  batch_size: 50

@@ -1,0 +1,22 @@
+# Executables
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Build outputs and temporary files
+cmd/installer/agent.exe
+cmd/installer/uninstaller.exe
+
+# Database and log files
+data/
+logs/
+*.db
+*.log
+
+# IDE and OS files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
