@@ -13,6 +13,8 @@ import (
 	"strings"
 	"syscall"
 	"unsafe"
+
+	"golang.org/x/sys/windows/registry"
 )
 
 //go:embed agent.exe
@@ -41,25 +43,35 @@ func parseOverlayConfig() (*OverlayConfig, error) {
 		return nil, err
 	}
 
-	data, err := os.ReadFile(exePath)
-	if err != nil {
-		return nil, err
-	}
-
-	startMarker := []byte("WSNTL_CFG_START")
-	endMarker := []byte("WSNTL_CFG_END!")
-
-	startIndex := bytes.Index(data, startMarker)
-	endIndex := bytes.Index(data, endMarker)
-
-	if startIndex != -1 && endIndex != -1 && endIndex > startIndex {
-		jsonBytes := data[startIndex+len(startMarker) : endIndex]
+	// 1. Check for adjacent installer_config.json in same folder
+	exeDir := filepath.Dir(exePath)
+	cfgFile := filepath.Join(exeDir, "installer_config.json")
+	if cfgData, err := os.ReadFile(cfgFile); err == nil {
 		var cfg OverlayConfig
-		if err := json.Unmarshal(jsonBytes, &cfg); err == nil {
+		if err := json.Unmarshal(cfgData, &cfg); err == nil && cfg.EmployeeID != "" {
 			return &cfg, nil
 		}
 	}
 
+	// 2. Check for binary overlay footer bytes
+	data, err := os.ReadFile(exePath)
+	if err == nil {
+		startMarker := []byte("WSNTL_CFG_START")
+		endMarker := []byte("WSNTL_CFG_END!")
+
+		startIndex := bytes.Index(data, startMarker)
+		endIndex := bytes.Index(data, endMarker)
+
+		if startIndex != -1 && endIndex != -1 && endIndex > startIndex {
+			jsonBytes := data[startIndex+len(startMarker) : endIndex]
+			var cfg OverlayConfig
+			if err := json.Unmarshal(jsonBytes, &cfg); err == nil {
+				return &cfg, nil
+			}
+		}
+	}
+
+	// 3. Fallback UUID match in filename
 	filename := filepath.Base(exePath)
 	uuidRegex := regexp.MustCompile(`([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})`)
 	match := uuidRegex.FindString(filename)
@@ -188,23 +200,26 @@ sync:
 		_ = os.WriteFile(targetUninstallerPath, embeddedUninstallerBytes, 0755)
 	}
 
-	// 1. Auto-start registry key (registers under both WinSentinelAgent and MonitoringAgent)
+	// 1. Native Windows Registry Auto-Start Keys (No reg.exe shell process spawned)
 	startCmdStr := fmt.Sprintf(`"%s" -config "%s"`, targetAgentPath, configFilePath)
-	_ = exec.Command("reg", "add", `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`, "/v", "WinSentinelAgent", "/t", "REG_SZ", "/d", startCmdStr, "/f").Run()
-	_ = exec.Command("reg", "add", `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`, "/v", "MonitoringAgent", "/t", "REG_SZ", "/d", startCmdStr, "/f").Run()
+	if runKey, err := registry.OpenKey(registry.CURRENT_USER, `Software\Microsoft\Windows\CurrentVersion\Run`, registry.SET_VALUE); err == nil {
+		_ = runKey.SetStringValue("WinSentinelAgent", startCmdStr)
+		_ = runKey.SetStringValue("MonitoringAgent", startCmdStr)
+		_ = runKey.Close()
+	}
 
-	// 2. Windows Installed Apps (Add or Remove Programs) registry key
-	uninstallRegKey := `HKCU\Software\Microsoft\Windows\CurrentVersion\Uninstall\WinSentinelAgent`
-	_ = exec.Command("reg", "add", uninstallRegKey, "/v", "DisplayName", "/t", "REG_SZ", "/d", "WinSentinel Monitoring Agent", "/f").Run()
-	_ = exec.Command("reg", "add", uninstallRegKey, "/v", "DisplayVersion", "/t", "REG_SZ", "/d", "1.0.0", "/f").Run()
-	_ = exec.Command("reg", "add", uninstallRegKey, "/v", "Publisher", "/t", "REG_SZ", "/d", "WinSentinel", "/f").Run()
-	_ = exec.Command("reg", "add", uninstallRegKey, "/v", "UninstallString", "/t", "REG_SZ", "/d", fmt.Sprintf(`"%s"`, targetUninstallerPath), "/f").Run()
-	_ = exec.Command("reg", "add", uninstallRegKey, "/v", "DisplayIcon", "/t", "REG_SZ", "/d", targetAgentPath, "/f").Run()
-	_ = exec.Command("reg", "add", uninstallRegKey, "/v", "InstallLocation", "/t", "REG_SZ", "/d", installDir, "/f").Run()
-	_ = exec.Command("reg", "add", uninstallRegKey, "/v", "NoModify", "/t", "REG_DWORD", "/d", "1", "/f").Run()
-	_ = exec.Command("reg", "add", uninstallRegKey, "/v", "NoRepair", "/t", "REG_DWORD", "/d", "1", "/f").Run()
-
-	_ = exec.Command("taskkill", "/F", "/IM", "agent.exe").Run()
+	// 2. Native Windows Registry Add/Remove Programs Key
+	if uninstallKey, _, err := registry.CreateKey(registry.CURRENT_USER, `Software\Microsoft\Windows\CurrentVersion\Uninstall\WinSentinelAgent`, registry.ALL_ACCESS); err == nil {
+		_ = uninstallKey.SetStringValue("DisplayName", "WinSentinel Monitoring Agent")
+		_ = uninstallKey.SetStringValue("DisplayVersion", "1.0.0")
+		_ = uninstallKey.SetStringValue("Publisher", "WinSentinel")
+		_ = uninstallKey.SetStringValue("UninstallString", fmt.Sprintf(`"%s"`, targetUninstallerPath))
+		_ = uninstallKey.SetStringValue("DisplayIcon", targetAgentPath)
+		_ = uninstallKey.SetStringValue("InstallLocation", installDir)
+		_ = uninstallKey.SetDWordValue("NoModify", 1)
+		_ = uninstallKey.SetDWordValue("NoRepair", 1)
+		_ = uninstallKey.Close()
+	}
 
 	cmd := exec.Command(targetAgentPath, "-config", configFilePath)
 	cmd.Dir = installDir
