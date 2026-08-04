@@ -19,24 +19,26 @@ import (
 )
 
 type ScreenshotService struct {
-	mu      sync.RWMutex
-	db      *database.DatabaseManager
-	cfg     config.ScreenshotConfig
-	log     *slog.Logger
-	state   string
-	cancel  context.CancelFunc
-	enabled bool
-	blur    bool
+	mu       sync.RWMutex
+	db       *database.DatabaseManager
+	cfg      config.ScreenshotConfig
+	log      *slog.Logger
+	state    string
+	cancel   context.CancelFunc
+	enabled  bool
+	blur     bool
+	inputSvc services.Service
 }
 
-func NewScreenshotService(db *database.DatabaseManager, cfg config.ScreenshotConfig, log *slog.Logger) *ScreenshotService {
+func NewScreenshotService(db *database.DatabaseManager, cfg config.ScreenshotConfig, log *slog.Logger, inputSvc services.Service) *ScreenshotService {
 	return &ScreenshotService{
-		db:      db,
-		cfg:     cfg,
-		log:     log,
-		state:   services.StateStopped,
-		enabled: true,
-		blur:    false,
+		db:       db,
+		cfg:      cfg,
+		log:      log,
+		state:    services.StateStopped,
+		enabled:  true,
+		blur:     false,
+		inputSvc: inputSvc,
 	}
 }
 
@@ -151,13 +153,25 @@ func (s *ScreenshotService) TakeScreenshot(ctx context.Context) (*models.Screens
 		fileSize = fi.Size()
 	}
 
+	keyPressCount := int64(0)
+	mouseClickCount := int64(0)
+	if s.inputSvc != nil {
+		if inputTracker, ok := s.inputSvc.(interface{ GetCurrentInputMetrics() models.InputActivity }); ok {
+			metrics := inputTracker.GetCurrentInputMetrics()
+			keyPressCount = metrics.KeyboardCount
+			mouseClickCount = metrics.MouseClicks
+		}
+	}
+
 	rec := &models.ScreenshotRecord{
-		FilePath:   filePath,
-		FileSize:   fileSize,
-		Width:      w,
-		Height:     h,
-		CapturedAt: time.Now(),
-		SyncStatus: "pending",
+		FilePath:        filePath,
+		FileSize:        fileSize,
+		Width:           w,
+		Height:          h,
+		KeyPressCount:   keyPressCount,
+		MouseClickCount: mouseClickCount,
+		CapturedAt:      time.Now(),
+		SyncStatus:      "pending",
 	}
 
 	if s.db != nil {

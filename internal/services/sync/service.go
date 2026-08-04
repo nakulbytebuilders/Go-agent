@@ -497,10 +497,26 @@ func (s *SyncService) uploadScreenshotToCloud(ctx context.Context, item models.S
 		windowTitle = val
 	}
 
+	keyPressCount := int64(0)
+	if val, ok := payload["key_press_count"].(float64); ok {
+		keyPressCount = int64(val)
+	} else if val, ok := payload["KeyPressCount"].(float64); ok {
+		keyPressCount = int64(val)
+	}
+
+	mouseClickCount := int64(0)
+	if val, ok := payload["mouse_click_count"].(float64); ok {
+		mouseClickCount = int64(val)
+	} else if val, ok := payload["MouseClickCount"].(float64); ok {
+		mouseClickCount = int64(val)
+	}
+
 	metadataJSON, _ := json.Marshal(map[string]interface{}{
-		"timestamp":   capturedAt,
-		"activeApp":   activeApp,
-		"windowTitle": windowTitle,
+		"timestamp":       capturedAt,
+		"activeApp":       activeApp,
+		"windowTitle":     windowTitle,
+		"keyPressCount":   keyPressCount,
+		"mouseClickCount": mouseClickCount,
 	})
 	_ = writer.WriteField("metadata", string(metadataJSON))
 

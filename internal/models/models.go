@@ -73,13 +73,15 @@ type ActivityLog struct {
 
 
 type ScreenshotRecord struct {
-	ID        int64     `json:"id" db:"id"`
-	FilePath  string    `json:"file_path" db:"file_path"`
-	FileSize  int64     `json:"file_size" db:"file_size"`
-	Width     int       `json:"width" db:"width"`
-	Height    int       `json:"height" db:"height"`
-	CapturedAt time.Time `json:"captured_at" db:"captured_at"`
-	SyncStatus string    `json:"sync_status" db:"sync_status"` // pending, uploaded, failed
+	ID              int64     `json:"id" db:"id"`
+	FilePath        string    `json:"file_path" db:"file_path"`
+	FileSize        int64     `json:"file_size" db:"file_size"`
+	Width           int       `json:"width" db:"width"`
+	Height          int       `json:"height" db:"height"`
+	KeyPressCount   int64     `json:"key_press_count" db:"key_press_count"`
+	MouseClickCount int64     `json:"mouse_click_count" db:"mouse_click_count"`
+	CapturedAt      time.Time `json:"captured_at" db:"captured_at"`
+	SyncStatus      string    `json:"sync_status" db:"sync_status"` // pending, uploaded, failed
 }
 
 type InputActivity struct {

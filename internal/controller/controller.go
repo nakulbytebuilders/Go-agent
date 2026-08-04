@@ -73,10 +73,10 @@ func NewAgentController(configPath string) (*AgentController, error) {
 }
 
 func (c *AgentController) registerServices() error {
+	inputSvc := input.NewInputService(c.db, c.cfg.Input, c.log)
 	appSvc := apptracker.NewAppTrackerService(c.db, c.cfg.AppTracker, c.log)
 	browserSvc := browsertracker.NewBrowserTrackerService(c.db, c.cfg.BrowserTracker, c.log)
-	ssSvc := screenshot.NewScreenshotService(c.db, c.cfg.Screenshot, c.log)
-	inputSvc := input.NewInputService(c.db, c.cfg.Input, c.log)
+	ssSvc := screenshot.NewScreenshotService(c.db, c.cfg.Screenshot, c.log, inputSvc)
 	queueSvc := queue.NewQueueService(c.db, c.log)
 	syncSvc := syncservice.NewSyncService(c.db, c.cfg.Sync, c.cfg.Server, logger.GetSyncLogger())
 

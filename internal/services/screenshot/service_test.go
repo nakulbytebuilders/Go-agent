@@ -18,7 +18,7 @@ func TestTakeScreenshot(t *testing.T) {
 		Quality:     80,
 	}
 
-	svc := screenshot.NewScreenshotService(nil, cfg, logger)
+	svc := screenshot.NewScreenshotService(nil, cfg, logger, nil)
 	rec, err := svc.TakeScreenshot(context.Background())
 	if err != nil {
 		t.Fatalf("TakeScreenshot failed: %v", err)
@@ -42,7 +42,7 @@ func TestScreenshotIntervalChange(t *testing.T) {
 		Quality:     80,
 	}
 
-	svc := screenshot.NewScreenshotService(nil, cfg, logger)
+	svc := screenshot.NewScreenshotService(nil, cfg, logger, nil)
 	if svc.GetInterval() != 60 {
 		t.Fatalf("Expected default interval 60, got %d", svc.GetInterval())
 	}
