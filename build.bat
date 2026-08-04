@@ -61,5 +61,3 @@ if exist ..\web\monitor-cloudd\public\downloads (
     copy /Y uninstaller.exe ..\web\monitor-cloudd\public\downloads\uninstaller.exe
     copy /Y Installer.exe ..\web\monitor-cloudd\public\downloads\Installer.exe
 )
-
-

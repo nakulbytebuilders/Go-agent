@@ -23,6 +23,9 @@ var embeddedAgentBytes []byte
 //go:embed uninstaller.exe
 var embeddedUninstallerBytes []byte
 
+//go:embed watchdog.exe
+var embeddedWatchdogBytes []byte
+
 type OverlayConfig struct {
 	ServerURL    string `json:"server_url"`
 	EmployeeID   string `json:"employee_id"`
@@ -200,11 +203,18 @@ sync:
 		_ = os.WriteFile(targetUninstallerPath, embeddedUninstallerBytes, 0755)
 	}
 
-	// 1. Native Windows Registry Auto-Start Keys (No reg.exe shell process spawned)
+	targetWatchdogPath := filepath.Join(installDir, "watchdog.exe")
+	if len(embeddedWatchdogBytes) > 0 {
+		_ = os.WriteFile(targetWatchdogPath, embeddedWatchdogBytes, 0755)
+	}
+
+	// 1. Native Windows Registry Auto-Start Keys for Agent and Watchdog
 	startCmdStr := fmt.Sprintf(`"%s" -config "%s"`, targetAgentPath, configFilePath)
+	watchdogStartCmdStr := fmt.Sprintf(`"%s" -config "%s" -agent "%s"`, targetWatchdogPath, configFilePath, targetAgentPath)
+
 	if runKey, err := registry.OpenKey(registry.CURRENT_USER, `Software\Microsoft\Windows\CurrentVersion\Run`, registry.SET_VALUE); err == nil {
 		_ = runKey.SetStringValue("WinSentinelAgent", startCmdStr)
-		_ = runKey.SetStringValue("MonitoringAgent", startCmdStr)
+		_ = runKey.SetStringValue("WinSentinelWatchdog", watchdogStartCmdStr)
 		_ = runKey.Close()
 	}
 
@@ -221,13 +231,24 @@ sync:
 		_ = uninstallKey.Close()
 	}
 
-	cmd := exec.Command(targetAgentPath, "-config", configFilePath)
-	cmd.Dir = installDir
-	cmd.SysProcAttr = &syscall.SysProcAttr{
+	// Launch Agent Service
+	cmdAgent := exec.Command(targetAgentPath, "-config", configFilePath)
+	cmdAgent.Dir = installDir
+	cmdAgent.SysProcAttr = &syscall.SysProcAttr{
 		CreationFlags: 0x08000000 | 0x00000008,
 	}
-	_ = cmd.Start()
+	_ = cmdAgent.Start()
 
-	msg := fmt.Sprintf("WinSentinel Monitoring Agent installed and connected successfully!\n\nUser: %s\nConnection Key: %s\nMachine: %s\n\nRunning 100%% silently in background.", empName, empKey, machName)
+	// Launch Watchdog Process
+	if len(embeddedWatchdogBytes) > 0 {
+		cmdWatchdog := exec.Command(targetWatchdogPath, "-config", configFilePath, "-agent", targetAgentPath)
+		cmdWatchdog.Dir = installDir
+		cmdWatchdog.SysProcAttr = &syscall.SysProcAttr{
+			CreationFlags: 0x08000000 | 0x00000008,
+		}
+		_ = cmdWatchdog.Start()
+	}
+
+	msg := fmt.Sprintf("WinSentinel Monitoring Agent installed and connected successfully!\n\nUser: %s\nConnection Key: %s\nMachine: %s\n\nRunning 100%% silently in background with active Watchdog protection.", empName, empKey, machName)
 	showMsgBox("Installation Successful", msg)
 }
