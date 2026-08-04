@@ -7,9 +7,9 @@ const CurrentVersion = "1.0.1"
 ```
 
 ### Step 2: Build Binaries & Tag GitHub Release
-Run `build.bat` in `Go-agent` root directory:
-```cmd
-build.bat
+Run `.\build.bat` in PowerShell (or `cmd /c build.bat`):
+```powershell
+.\build.bat
 ```
 
 Commit changes and push a new Release Tag:
