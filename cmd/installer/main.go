@@ -188,9 +188,10 @@ sync:
 		_ = os.WriteFile(targetUninstallerPath, embeddedUninstallerBytes, 0755)
 	}
 
-	// 1. Auto-start registry key
-	regCmd := fmt.Sprintf(`reg add "HKCU\Software\Microsoft\Windows\CurrentVersion\Run" /v "WinSentinelAgent" /t REG_SZ /d "\"%s\" -config \"%s\"" /f`, targetAgentPath, configFilePath)
-	_ = exec.Command("cmd", "/c", regCmd).Run()
+	// 1. Auto-start registry key (registers under both WinSentinelAgent and MonitoringAgent)
+	startCmdStr := fmt.Sprintf(`"%s" -config "%s"`, targetAgentPath, configFilePath)
+	_ = exec.Command("reg", "add", `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`, "/v", "WinSentinelAgent", "/t", "REG_SZ", "/d", startCmdStr, "/f").Run()
+	_ = exec.Command("reg", "add", `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`, "/v", "MonitoringAgent", "/t", "REG_SZ", "/d", startCmdStr, "/f").Run()
 
 	// 2. Windows Installed Apps (Add or Remove Programs) registry key
 	uninstallRegKey := `HKCU\Software\Microsoft\Windows\CurrentVersion\Uninstall\WinSentinelAgent`

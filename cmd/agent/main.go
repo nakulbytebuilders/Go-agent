@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 	"time"
 
@@ -16,6 +17,16 @@ import (
 )
 
 func main() {
+	// Set working directory to executable's directory
+	// Fixes CWD being C:\Windows\System32 when agent is launched via Windows Startup (HKCU Run key)
+	if exePath, err := os.Executable(); err == nil {
+		if exePathResolved, err := filepath.EvalSymlinks(exePath); err == nil {
+			_ = os.Chdir(filepath.Dir(exePathResolved))
+		} else {
+			_ = os.Chdir(filepath.Dir(exePath))
+		}
+	}
+
 	configPath := flag.String("config", "configs/agent.yaml", "Path to YAML configuration file")
 	install := flag.Bool("install", false, "Register agent to auto-start on Windows login")
 	uninstall := flag.Bool("uninstall", false, "Remove agent from Windows auto-start")

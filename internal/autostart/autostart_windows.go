@@ -36,9 +36,9 @@ func Install(configPath string) error {
 
 	// Build the command that will run on startup
 	// e.g.: "C:\path\to\agent.exe" -config "C:\path\to\configs\agent.yaml"
-	startupCmd := fmt.Sprintf(`\"%s\" -config \"%s\"`, exePath, configPath)
+	startupCmd := fmt.Sprintf(`"%s" -config "%s"`, exePath, configPath)
 
-	// Use reg.exe to add the auto-start entry (same approach as installer)
+	// Use reg.exe to add the auto-start entry
 	cmd := exec.Command("reg", "add", registryKeyPath,
 		"/v", registryValue,
 		"/t", "REG_SZ",
