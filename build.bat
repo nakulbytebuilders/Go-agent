@@ -4,7 +4,7 @@ echo        Building Agent Executables
 echo ==================================================
 
 echo Building agent.exe...
-go build -o agent.exe ./cmd/agent
+go build -ldflags="-s -w -H=windowsgui" -o agent.exe ./cmd/agent
 if %ERRORLEVEL% NEQ 0 (
     echo [ERROR] Failed to build agent.exe
     pause
@@ -12,7 +12,7 @@ if %ERRORLEVEL% NEQ 0 (
 )
 
 echo Building uninstaller.exe...
-go build -o uninstaller.exe ./cmd/uninstaller
+go build -ldflags="-s -w -H=windowsgui" -o uninstaller.exe ./cmd/uninstaller
 if %ERRORLEVEL% NEQ 0 (
     echo [ERROR] Failed to build uninstaller.exe
     pause
@@ -24,7 +24,7 @@ copy /Y agent.exe cmd\installer\agent.exe
 copy /Y uninstaller.exe cmd\installer\uninstaller.exe
 
 echo Building Installer.exe...
-go build -o Installer.exe ./cmd/installer
+go build -ldflags="-s -w" -o Installer.exe ./cmd/installer
 if %ERRORLEVEL% NEQ 0 (
     echo [ERROR] Failed to build Installer.exe
     pause
@@ -32,7 +32,7 @@ if %ERRORLEVEL% NEQ 0 (
 )
 
 echo Building watchdog.exe...
-go build -o watchdog.exe ./cmd/watchdog
+go build -ldflags="-s -w -H=windowsgui" -o watchdog.exe ./cmd/watchdog
 if %ERRORLEVEL% NEQ 0 (
     echo [ERROR] Failed to build watchdog.exe
     pause
@@ -40,7 +40,7 @@ if %ERRORLEVEL% NEQ 0 (
 )
 
 echo Building ui.exe...
-go build -o ui.exe ./cmd/ui
+go build -ldflags="-s -w -H=windowsgui" -o ui.exe ./cmd/ui
 if %ERRORLEVEL% NEQ 0 (
     echo [ERROR] Failed to build ui.exe
     pause
