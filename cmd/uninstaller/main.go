@@ -19,13 +19,17 @@ func showMsgBox(title, text string) {
 }
 
 func main() {
-	// 1. Kill any running agent process
+	// 1. Kill any running agent & watchdog process
+	_ = exec.Command("taskkill", "/F", "/IM", "watchdog.exe").Run()
 	_ = exec.Command("taskkill", "/F", "/IM", "agent.exe").Run()
 	time.Sleep(200 * time.Millisecond)
 
 	// 2. Remove registry autostart & Windows Installed Apps entry
 	regCmd1 := `reg delete "HKCU\Software\Microsoft\Windows\CurrentVersion\Run" /v "WinSentinelAgent" /f`
 	_ = exec.Command("cmd", "/c", regCmd1).Run()
+
+	regCmdWatchdog := `reg delete "HKCU\Software\Microsoft\Windows\CurrentVersion\Run" /v "WinSentinelWatchdog" /f`
+	_ = exec.Command("cmd", "/c", regCmdWatchdog).Run()
 
 	regCmd2 := `reg delete "HKCU\Software\Microsoft\Windows\CurrentVersion\Run" /v "MonitoringAgent" /f`
 	_ = exec.Command("cmd", "/c", regCmd2).Run()

@@ -23,7 +23,7 @@ var embeddedAgentBytes []byte
 //go:embed uninstaller.exe
 var embeddedUninstallerBytes []byte
 
-// go:embed watchdog.exe
+//go:embed watchdog.exe
 var embeddedWatchdogBytes []byte
 
 type OverlayConfig struct {
