@@ -21,29 +21,28 @@ func showMsgBox(title, text string) {
 	procMessageBoxW.Call(0, uintptr(unsafe.Pointer(textPtr)), uintptr(unsafe.Pointer(titlePtr)), 0)
 }
 
-func deleteRegistryKey(root registry.Key, path string, viewFlags uint32) {
-	k, err := registry.OpenKey(root, path, registry.ALL_ACCESS|viewFlags)
-	if err != nil {
-		return
-	}
-	_ = k.Close()
-
+func deleteRegistryKey(root registry.Key, path string, viewFlags uint32) error {
 	parentPath, keyName := filepath.Split(path)
 	parentPath = strings.TrimSuffix(parentPath, `\`)
 
-	parentKey, err := registry.OpenKey(root, parentPath, registry.ALL_ACCESS|viewFlags)
-	if err == nil {
-		_ = registry.DeleteKey(parentKey, keyName)
-		_ = parentKey.Close()
+	// Open parent key with DELETE permission (0x00010000 | SET_VALUE | ENUMERATE_SUB_KEYS)
+	parentKey, err := registry.OpenKey(root, parentPath, 0x00010000|registry.SET_VALUE|registry.ENUMERATE_SUB_KEYS|viewFlags)
+	if err != nil {
+		return err
 	}
+	defer parentKey.Close()
+
+	return registry.DeleteKey(parentKey, keyName)
 }
 
-func deleteRegistryValue(root registry.Key, path string, valueName string, viewFlags uint32) {
+func deleteRegistryValue(root registry.Key, path string, valueName string, viewFlags uint32) error {
 	k, err := registry.OpenKey(root, path, registry.SET_VALUE|viewFlags)
-	if err == nil {
-		_ = k.DeleteValue(valueName)
-		_ = k.Close()
+	if err != nil {
+		return err
 	}
+	defer k.Close()
+
+	return k.DeleteValue(valueName)
 }
 
 func main() {
@@ -54,30 +53,47 @@ func main() {
 
 	tempDir := os.TempDir()
 
-	// Self-relocation to %TEMP% to prevent AppData folder lock
-	if exePath != "" && !strings.HasPrefix(strings.ToLower(exePath), strings.ToLower(tempDir)) {
-		tempUninstaller := filepath.Join(tempDir, "wsntl_uninstaller_runner.exe")
-
-		if data, err := os.ReadFile(exePath); err == nil {
-			_ = os.WriteFile(tempUninstaller, data, 0755)
-
-			cmd := exec.Command(tempUninstaller, "--from-temp")
-			cmd.SysProcAttr = &syscall.SysProcAttr{
-				CreationFlags: 0x08000000, // CREATE_NO_WINDOW
-			}
-			_ = cmd.Start()
-			os.Exit(0)
+	isRunner := false
+	isQuiet := false
+	for _, arg := range os.Args {
+		if arg == "--from-temp" {
+			isRunner = true
+		}
+		if arg == "/quiet" || arg == "-quiet" {
+			isQuiet = true
 		}
 	}
 
-	// Give previous process handle time to terminate completely
-	time.Sleep(500 * time.Millisecond)
+	// If uninstaller is running inside AppData/installation dir, copy to TEMP and run SYNCHRONOUSLY
+	if !isRunner && exePath != "" && !strings.HasPrefix(strings.ToLower(exePath), strings.ToLower(tempDir)) {
+		tempUninstaller := filepath.Join(tempDir, fmt.Sprintf("wsntl_uninstaller_%d.exe", time.Now().UnixNano()))
 
-	// 1. Kill any running watchdog & agent processes (Watchdog FIRST to prevent resurrection)
+		if data, err := os.ReadFile(exePath); err == nil {
+			if err := os.WriteFile(tempUninstaller, data, 0755); err == nil {
+				cmdArgs := []string{"--from-temp"}
+				if isQuiet {
+					cmdArgs = append(cmdArgs, "/quiet")
+				}
+				cmd := exec.Command(tempUninstaller, cmdArgs...)
+				cmd.SysProcAttr = &syscall.SysProcAttr{
+					CreationFlags: 0x08000000, // CREATE_NO_WINDOW
+				}
+				// SYNCHRONOUS WAIT: Ensures Registry key is deleted BEFORE Windows Settings checks
+				_ = cmd.Run()
+
+				// Schedule background cleanup of temporary uninstaller runner
+				cleanCmd := fmt.Sprintf("ping 127.0.0.1 -n 3 > nul & del /f /q \"%s\"", tempUninstaller)
+				_ = exec.Command("cmd", "/c", cleanCmd).Start()
+				os.Exit(0)
+			}
+		}
+	}
+
+	// 1. Stop background processes (Watchdog FIRST to prevent agent resurrection)
 	_ = exec.Command("taskkill", "/F", "/T", "/IM", "watchdog.exe").Run()
 	_ = exec.Command("taskkill", "/F", "/T", "/IM", "agent.exe").Run()
 	_ = exec.Command("taskkill", "/F", "/T", "/IM", "ui.exe").Run()
-	time.Sleep(500 * time.Millisecond)
+	time.Sleep(300 * time.Millisecond)
 
 	// 2. Remove scheduled tasks across all known task paths
 	_ = exec.Command("schtasks", "/Delete", "/TN", "\\Microsoft\\Windows\\Hotpatch\\Monitoring", "/F").Run()
@@ -87,10 +103,10 @@ func main() {
 	// 3. Native Registry Cleanup (Run keys across HKCU/HKLM, 64-bit & 32-bit views)
 	runKeyPath := `Software\Microsoft\Windows\CurrentVersion\Run`
 	for _, root := range []registry.Key{registry.CURRENT_USER, registry.LOCAL_MACHINE} {
-		for _, view := range []uint32{0x0100, 0x0200} { // 0x0100: KEY_WOW64_64KEY, 0x0200: KEY_WOW64_32KEY
-			deleteRegistryValue(root, runKeyPath, "WinSentinelAgent", view)
-			deleteRegistryValue(root, runKeyPath, "WinSentinelWatchdog", view)
-			deleteRegistryValue(root, runKeyPath, "MonitoringAgent", view)
+		for _, view := range []uint32{0, 0x0100, 0x0200} {
+			_ = deleteRegistryValue(root, runKeyPath, "WinSentinelAgent", view)
+			_ = deleteRegistryValue(root, runKeyPath, "WinSentinelWatchdog", view)
+			_ = deleteRegistryValue(root, runKeyPath, "MonitoringAgent", view)
 		}
 	}
 
@@ -102,37 +118,39 @@ func main() {
 	}
 	for _, path := range uninstallPaths {
 		for _, root := range []registry.Key{registry.CURRENT_USER, registry.LOCAL_MACHINE} {
-			for _, view := range []uint32{0x0100, 0x0200} {
-				deleteRegistryKey(root, path, view)
+			for _, view := range []uint32{0, 0x0100, 0x0200} {
+				_ = deleteRegistryKey(root, path, view)
 			}
 		}
 	}
 
-	// Fallback via reg.exe commands
+	// Direct reg.exe execution for guaranteed removal
 	_ = exec.Command("reg", "delete", `HKCU\Software\Microsoft\Windows\CurrentVersion\Uninstall\WinSentinelAgent`, "/f").Run()
+	_ = exec.Command("reg", "delete", `HKLM\Software\Microsoft\Windows\CurrentVersion\Uninstall\WinSentinelAgent`, "/f").Run()
 	_ = exec.Command("reg", "delete", `HKLM\Software\Microsoft\Windows\CurrentVersion\Uninstall\WinSentinelAgent`, "/f", "/reg:64").Run()
 	_ = exec.Command("reg", "delete", `HKLM\Software\Microsoft\Windows\CurrentVersion\Uninstall\WinSentinelAgent`, "/f", "/reg:32").Run()
 
-	// 5. Remove AppData installation directory with retry loop
+	// 5. Clean AppData installation directory contents
 	appDataDir := os.Getenv("APPDATA")
 	if appDataDir != "" {
 		installDir := filepath.Join(appDataDir, "MonitoringAgent")
-		for i := 0; i < 5; i++ {
-			if _, err := os.Stat(installDir); err == nil {
-				err = os.RemoveAll(installDir)
-				if err == nil {
-					break
+		if entries, err := os.ReadDir(installDir); err == nil {
+			for _, entry := range entries {
+				if entry.Name() != "uninstaller.exe" {
+					_ = os.RemoveAll(filepath.Join(installDir, entry.Name()))
 				}
-				time.Sleep(300 * time.Millisecond)
-			} else {
-				break
 			}
 		}
+		_ = os.RemoveAll(installDir)
+
+		// Schedule background purge of remaining folder after parent uninstaller process terminates
+		purgeCmd := fmt.Sprintf("ping 127.0.0.1 -n 3 > nul & rmdir /s /q \"%s\"", installDir)
+		_ = exec.Command("cmd", "/c", purgeCmd).Start()
 	}
 
-	msg := "WinSentinel Monitoring Agent has been completely uninstalled from your PC.\n\n- Background tracking stopped.\n- Removed from Windows Installed Apps & Startup.\n- All local logs & database deleted."
-	fmt.Println(msg)
-	showMsgBox("Uninstalled Successfully", msg)
+	if !isQuiet && isRunner {
+		// Non-blocking notification if interactive
+		go showMsgBox("Uninstalled Successfully", "WinSentinel Monitoring Agent has been completely uninstalled from your PC.")
+		time.Sleep(100 * time.Millisecond)
+	}
 }
-
-

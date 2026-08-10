@@ -1,10 +1,10 @@
 server:
-  api_url: "http://monitor-cloudd.test/api"
-  agent_id: "225e946a-9035-4051-9b12-a3fc03efe73f"
-  api_key: "b39be937-5ce7-4935-9868-51da32584637"
-  heartbeat_interval_sec: 15
-  employee_id: "03d06c36-3882-4976-905c-864b2975c065"
-  machine_name: "rushil-laptop"
+  api_url: "http://127.0.0.1:9898/api"
+  agent_id: "e865b763-1018-4f3a-bdc6-313fdda28ac5"
+  api_key: "54295aae-b6e1-41eb-ac3f-ab824121e1f5"
+  heartbeat_interval_sec: 5
+  employee_id: "nakul@gmail.com"
+  machine_name: "BYTE_BUILDERS"
 
 web_server:
   enabled: true
@@ -40,12 +40,12 @@ browser_tracker:
   poll_interval_sec: 3
 
 screenshot:
-  interval_sec: 30
+  interval_sec: 10
   quality: 80
 
 input:
   poll_interval_sec: 5
 
 sync:
-  interval_sec: 30
+  interval_sec: 5
   batch_size: 50

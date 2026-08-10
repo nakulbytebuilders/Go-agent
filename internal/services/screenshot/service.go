@@ -156,7 +156,9 @@ func (s *ScreenshotService) TakeScreenshot(ctx context.Context) (*models.Screens
 	keyPressCount := int64(0)
 	mouseClickCount := int64(0)
 	if s.inputSvc != nil {
-		if inputTracker, ok := s.inputSvc.(interface{ GetCurrentInputMetrics() models.InputActivity }); ok {
+		if inputTracker, ok := s.inputSvc.(interface{ GetAndResetScreenshotMetrics() (int64, int64) }); ok {
+			keyPressCount, mouseClickCount = inputTracker.GetAndResetScreenshotMetrics()
+		} else if inputTracker, ok := s.inputSvc.(interface{ GetCurrentInputMetrics() models.InputActivity }); ok {
 			metrics := inputTracker.GetCurrentInputMetrics()
 			keyPressCount = metrics.KeyboardCount
 			mouseClickCount = metrics.MouseClicks

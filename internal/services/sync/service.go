@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -497,19 +498,8 @@ func (s *SyncService) uploadScreenshotToCloud(ctx context.Context, item models.S
 		windowTitle = val
 	}
 
-	keyPressCount := int64(0)
-	if val, ok := payload["key_press_count"].(float64); ok {
-		keyPressCount = int64(val)
-	} else if val, ok := payload["KeyPressCount"].(float64); ok {
-		keyPressCount = int64(val)
-	}
-
-	mouseClickCount := int64(0)
-	if val, ok := payload["mouse_click_count"].(float64); ok {
-		mouseClickCount = int64(val)
-	} else if val, ok := payload["MouseClickCount"].(float64); ok {
-		mouseClickCount = int64(val)
-	}
+	keyPressCount := getInt64FromMap(payload, "key_press_count", "KeyPressCount", "key_presses", "keyPressCount", "keystrokes")
+	mouseClickCount := getInt64FromMap(payload, "mouse_click_count", "MouseClickCount", "mouse_clicks", "mouseClickCount")
 
 	metadataJSON, _ := json.Marshal(map[string]interface{}{
 		"timestamp":       capturedAt,
@@ -613,3 +603,24 @@ func (s *SyncService) FetchPolicy(ctx context.Context) (*PolicyResponse, error) 
 
 	return &policy, nil
 }
+
+func getInt64FromMap(m map[string]interface{}, keys ...string) int64 {
+	for _, key := range keys {
+		if val, ok := m[key]; ok && val != nil {
+			switch v := val.(type) {
+			case float64:
+				return int64(v)
+			case int64:
+				return v
+			case int:
+				return int64(v)
+			case string:
+				if parsed, err := strconv.ParseInt(v, 10, 64); err == nil {
+					return parsed
+				}
+			}
+		}
+	}
+	return 0
+}
+

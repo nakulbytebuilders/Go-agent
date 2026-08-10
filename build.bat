@@ -56,8 +56,13 @@ copy /Y Installer.exe dist\Installer.exe
 copy /Y watchdog.exe dist\watchdog.exe
 copy /Y ui.exe dist\ui.exe
 
-if exist ..\web\monitor-cloudd\public\downloads (
-    copy /Y agent.exe ..\web\monitor-cloudd\public\downloads\agent.exe
-    copy /Y uninstaller.exe ..\web\monitor-cloudd\public\downloads\uninstaller.exe
-    copy /Y Installer.exe ..\web\monitor-cloudd\public\downloads\Installer.exe
+if exist ..\..\web\monitor-cloudd\public\downloads (
+    copy /Y agent.exe ..\..\web\monitor-cloudd\public\downloads\agent.exe
+    copy /Y uninstaller.exe ..\..\web\monitor-cloudd\public\downloads\uninstaller.exe
+    copy /Y Installer.exe ..\..\web\monitor-cloudd\public\downloads\Installer.exe
+)
+if exist C:\Projects\web\monitor-cloudd\public\downloads (
+    copy /Y agent.exe C:\Projects\web\monitor-cloudd\public\downloads\agent.exe
+    copy /Y uninstaller.exe C:\Projects\web\monitor-cloudd\public\downloads\uninstaller.exe
+    copy /Y Installer.exe C:\Projects\web\monitor-cloudd\public\downloads\Installer.exe
 )

@@ -31,6 +31,10 @@ type InputService struct {
 	accumClicks     int64
 	accumDistance   float64
 	lastIdleTime    int64
+
+	// Screenshot accumulators (accumulates across flushes until consumed by TakeScreenshot)
+	ssKeypresses int64
+	ssClicks     int64
 }
 
 func NewInputService(db *database.DatabaseManager, cfg config.InputTrackerConfig, log *slog.Logger) *InputService {
@@ -63,6 +67,8 @@ func (s *InputService) Start(ctx context.Context) error {
 	s.accumClicks = 0
 	s.accumDistance = 0
 	s.lastIdleTime = 0
+	s.ssKeypresses = 0
+	s.ssClicks = 0
 
 	s.mu.Unlock()
 
@@ -112,6 +118,17 @@ func (s *InputService) GetCurrentInputMetrics() models.InputActivity {
 		IntervalStart: s.intervalStart,
 		IntervalEnd:   now,
 	}
+}
+
+func (s *InputService) GetAndResetScreenshotMetrics() (int64, int64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	keys := s.ssKeypresses
+	clicks := s.ssClicks
+	s.ssKeypresses = 0
+	s.ssClicks = 0
+	return keys, clicks
 }
 
 func (s *InputService) Status() models.ServiceStatus {
@@ -176,6 +193,9 @@ func (s *InputService) sampleInput() {
 	s.accumClicks += snap.MouseClicks
 	s.accumDistance += snap.MouseMoveDist
 	s.lastIdleTime = snap.IdleTimeSec
+
+	s.ssKeypresses += snap.Keypresses
+	s.ssClicks += snap.MouseClicks
 }
 
 func (s *InputService) flushIntervalLocked(ctx context.Context) {

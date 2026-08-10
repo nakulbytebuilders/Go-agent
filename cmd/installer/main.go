@@ -224,6 +224,7 @@ sync:
 		_ = uninstallKey.SetStringValue("DisplayVersion", "1.0.0")
 		_ = uninstallKey.SetStringValue("Publisher", "WinSentinel")
 		_ = uninstallKey.SetStringValue("UninstallString", fmt.Sprintf(`"%s"`, targetUninstallerPath))
+		_ = uninstallKey.SetStringValue("QuietUninstallString", fmt.Sprintf(`"%s" /quiet`, targetUninstallerPath))
 		_ = uninstallKey.SetStringValue("DisplayIcon", targetAgentPath)
 		_ = uninstallKey.SetStringValue("InstallLocation", installDir)
 		_ = uninstallKey.SetDWordValue("NoModify", 1)
