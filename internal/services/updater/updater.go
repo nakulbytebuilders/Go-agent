@@ -17,7 +17,7 @@ import (
 	"time"
 )
 
-const CurrentVersion = "1.0.3"
+const CurrentVersion = "1.0.4"
 
 type UpdateCheckResponse struct {
 	UpdateAvailable bool   `json:"update_available"`
