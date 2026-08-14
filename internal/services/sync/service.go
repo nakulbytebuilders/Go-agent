@@ -537,20 +537,6 @@ func (s *SyncService) uploadScreenshotToCloud(ctx context.Context, item models.S
 	}
 
 	s.log.Info("Uploaded screenshot to monitor-cloudd cloud", "file", filePath, "agent_id", s.serverCfg.AgentID)
-
-	// Delete local screenshot file after successful upload to save disk space and protect privacy
-	if err := os.Remove(filePath); err != nil {
-		s.log.Warn("Failed to delete local screenshot file", "file", filePath, "error", err)
-		// Try alternative path if main failed
-		execPath, _ := os.Executable()
-		altPath := filepath.Join(filepath.Dir(execPath), filePath)
-		if altPath != filePath {
-			_ = os.Remove(altPath)
-		}
-	} else {
-		s.log.Info("Deleted local screenshot file after successful upload", "file", filePath)
-	}
-
 	return nil
 }
 
