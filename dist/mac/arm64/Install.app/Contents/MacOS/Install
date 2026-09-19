@@ -1,0 +1,43 @@
+#!/bin/bash
+# App bundle entry point. macOS LaunchServices execs this file directly when
+# the .app is double-clicked - it does NOT go through the user's login shell
+# (unlike double-clicking a .command file, which opens Terminal and sources
+# ~/.zshrc first). That sidesteps zsh compinit/config issues entirely.
+set -u
+
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
+cd "$DIR" || exit 1
+
+LOGFILE="$DIR/install-log.txt"
+: > "$LOGFILE"
+
+notify() {
+    osascript -e "display notification \"$1\" with title \"WinSentinel\"" >/dev/null 2>&1
+}
+
+alert() {
+    osascript -e "display dialog \"$1\" buttons {\"OK\"} default button \"OK\" with icon $2 with title \"WinSentinel\"" >/dev/null 2>&1
+}
+
+if [ ! -f "$DIR/install.sh" ]; then
+    case "$DIR" in
+        */AppTranslocation/*)
+            alert "macOS is running this app from a quarantined temporary location (App Translocation), so it can't see install.sh next to it.\n\nFix (one time only): open Terminal and run:\n\nxattr -dr com.apple.quarantine ~/Downloads/<the extracted folder name>\n\nThen double-click this app again." "caution"
+            ;;
+        *)
+            alert "install.sh not found next to this app. Please re-extract the downloaded zip and keep all files together in the same folder." "caution"
+            ;;
+    esac
+    exit 1
+fi
+
+chmod +x "$DIR/install.sh" "$DIR/uninstall.sh" "$DIR/agent" "$DIR/watchdog" 2>/dev/null
+xattr -dr com.apple.quarantine "$DIR" 2>/dev/null || true
+
+notify "Installing WinSentinel Monitoring Agent..."
+
+if bash "$DIR/install.sh" >>"$LOGFILE" 2>&1; then
+    alert "WinSentinel Monitoring Agent installed and running successfully!\n\nmacOS may ask you to grant Screen Recording and Accessibility permission the first time - please approve those for tracking to work." "note"
+else
+    alert "Installation failed. Open install-log.txt (in the same folder as this app) for details." "caution"
+fi

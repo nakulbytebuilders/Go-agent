@@ -13,7 +13,6 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 )
 
@@ -147,9 +146,7 @@ func (u *UpdaterService) performSelfUpdate(ctx context.Context, downloadURL stri
 	// 5. Launch the updated agent process
 	cmd := exec.Command(exePath, "-config", u.configPath)
 	cmd.Dir = installDir
-	cmd.SysProcAttr = &syscall.SysProcAttr{
-		CreationFlags: 0x08000000 | 0x00000008, // DETACHED_PROCESS | CREATE_NO_WINDOW
-	}
+	cmd.SysProcAttr = detachedSysProcAttr()
 
 	if err := cmd.Start(); err != nil {
 		u.log.Error("Failed to start updated agent process", "error", err)

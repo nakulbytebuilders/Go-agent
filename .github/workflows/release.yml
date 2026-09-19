@@ -39,3 +39,61 @@ jobs:
             dist/ui.exe
           draft: false
           prerelease: false
+
+  build-and-release-linux:
+    name: Build & Publish Linux Binaries
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Go Environment
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+
+      - name: Build Linux Agent Binaries
+        run: bash build-linux.sh
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        if: startsWith(github.ref, 'refs/tags/')
+        with:
+          files: |
+            dist/linux/agent
+            dist/linux/watchdog
+            dist/linux/install.sh
+            dist/linux/uninstall.sh
+          draft: false
+          prerelease: false
+
+  build-and-release-mac:
+    name: Build & Publish macOS Binaries
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Go Environment
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+
+      - name: Build macOS Agent Binaries
+        run: bash build-mac.sh
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        if: startsWith(github.ref, 'refs/tags/')
+        with:
+          files: |
+            dist/mac/amd64/agent
+            dist/mac/amd64/watchdog
+            dist/mac/arm64/agent
+            dist/mac/arm64/watchdog
+            dist/mac/arm64/install.sh
+            dist/mac/arm64/uninstall.sh
+          draft: false
+          prerelease: false
