@@ -27,23 +27,24 @@ if %ERRORLEVEL% NEQ 0 (
     exit /b %ERRORLEVEL%
 )
 
-echo Copying agent.exe, uninstaller.exe and svc.exe to cmd\installer...
+echo Building watchdog.exe...
+go build -ldflags="-s -w -H=windowsgui" -o watchdog.exe ./cmd/watchdog
+if %ERRORLEVEL% NEQ 0 (
+    echo [ERROR] Failed to build watchdog.exe
+    pause
+    exit /b %ERRORLEVEL%
+)
+
+echo Copying agent.exe, uninstaller.exe, svc.exe and watchdog.exe to cmd\installer...
 copy /Y agent.exe cmd\installer\agent.exe
 copy /Y uninstaller.exe cmd\installer\uninstaller.exe
 copy /Y svc.exe cmd\installer\svc.exe
+copy /Y watchdog.exe cmd\installer\watchdog.exe
 
 echo Building Installer.exe...
 go build -ldflags="-s -w" -o Installer.exe ./cmd/installer
 if %ERRORLEVEL% NEQ 0 (
     echo [ERROR] Failed to build Installer.exe
-    pause
-    exit /b %ERRORLEVEL%
-)
-
-echo Building watchdog.exe...
-go build -ldflags="-s -w -H=windowsgui" -o watchdog.exe ./cmd/watchdog
-if %ERRORLEVEL% NEQ 0 (
-    echo [ERROR] Failed to build watchdog.exe
     pause
     exit /b %ERRORLEVEL%
 )
