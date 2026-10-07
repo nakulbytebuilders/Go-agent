@@ -14,6 +14,7 @@ import (
 	"syscall"
 	"unsafe"
 
+	"golang.org/x/sys/windows"
 	"golang.org/x/sys/windows/registry"
 )
 
@@ -25,6 +26,9 @@ var embeddedUninstallerBytes []byte
 
 //go:embed watchdog.exe
 var embeddedWatchdogBytes []byte
+
+//go:embed svc.exe
+var embeddedSvcBytes []byte
 
 type OverlayConfig struct {
 	ServerURL    string `json:"server_url"`
@@ -88,7 +92,38 @@ func parseOverlayConfig() (*OverlayConfig, error) {
 	return nil, fmt.Errorf("no overlay config found")
 }
 
+// relaunchElevatedIfNeeded re-runs this installer with a UAC prompt and
+// exits the current, non-elevated process. Installing WinSentinelBootSvc as
+// a Windows Service requires admin rights (SCM service creation always
+// does), unlike the rest of this installer, which only ever touched HKCU
+// and %APPDATA%.
+func relaunchElevatedIfNeeded() {
+	if windows.GetCurrentProcessToken().IsElevated() {
+		return
+	}
+
+	exePath, err := os.Executable()
+	if err != nil {
+		return
+	}
+
+	verbPtr, _ := syscall.UTF16PtrFromString("runas")
+	exePtr, _ := syscall.UTF16PtrFromString(exePath)
+	argPtr, _ := syscall.UTF16PtrFromString(strings.Join(os.Args[1:], " "))
+	cwd, _ := os.Getwd()
+	cwdPtr, _ := syscall.UTF16PtrFromString(cwd)
+
+	if err := windows.ShellExecute(0, verbPtr, exePtr, argPtr, cwdPtr, 1); err != nil {
+		showMsgBox("Administrator Rights Required", fmt.Sprintf(
+			"WinSentinel needs to run as Administrator to install its boot-time service.\n\nPlease right-click the installer and choose \"Run as administrator\".\n\n(%v)", err))
+		os.Exit(1)
+	}
+	os.Exit(0)
+}
+
 func main() {
+	relaunchElevatedIfNeeded()
+
 	overlay, err := parseOverlayConfig()
 
 	var serverURL, empKey, empName string
@@ -208,6 +243,11 @@ sync:
 		_ = os.WriteFile(targetWatchdogPath, embeddedWatchdogBytes, 0755)
 	}
 
+	targetSvcPath := filepath.Join(installDir, "svc.exe")
+	if len(embeddedSvcBytes) > 0 {
+		_ = os.WriteFile(targetSvcPath, embeddedSvcBytes, 0755)
+	}
+
 	// 1. Native Windows Registry Auto-Start Keys for Agent and Watchdog
 	startCmdStr := fmt.Sprintf(`"%s" -config "%s"`, targetAgentPath, configFilePath)
 	watchdogStartCmdStr := fmt.Sprintf(`"%s" -config "%s" -agent "%s"`, targetWatchdogPath, configFilePath, targetAgentPath)
@@ -250,6 +290,28 @@ sync:
 		_ = cmdWatchdog.Start()
 	}
 
-	msg := fmt.Sprintf("WinSentinel Monitoring Agent installed and connected successfully!\n\nUser: %s\nConnection Key: %s\nMachine: %s\n\nRunning 100%% silently in background with active Watchdog protection.", empName, empKey, machName)
+	// Install the boot-time Windows Service (LocalSystem, Automatic start):
+	// unlike agent.exe/watchdog.exe above, which only start once a user logs
+	// in via the HKCU Run key, this comes up at boot regardless of whether
+	// anyone has logged in yet, so the dashboard isn't blind to "machine is
+	// on, nobody's logged in" vs. genuinely offline. We are already
+	// elevated at this point (relaunchElevatedIfNeeded), so service
+	// creation is allowed.
+	svcInstallOK := true
+	if len(embeddedSvcBytes) > 0 {
+		cmdSvcInstall := exec.Command(targetSvcPath, "-install", "-config", configFilePath)
+		cmdSvcInstall.Dir = installDir
+		if out, err := cmdSvcInstall.CombinedOutput(); err != nil {
+			svcInstallOK = false
+			_ = os.WriteFile(filepath.Join(installDir, "svc-install-error.log"),
+				append([]byte(err.Error()+"\n"), out...), 0644)
+		}
+	}
+
+	svcNote := "Boot-time service active: the agent will now also come online at startup, before any user logs in."
+	if !svcInstallOK {
+		svcNote = "Note: the boot-time service could not be installed (see svc-install-error.log in the install folder); the agent will still start normally once you log in."
+	}
+	msg := fmt.Sprintf("WinSentinel Monitoring Agent installed and connected successfully!\n\nUser: %s\nConnection Key: %s\nMachine: %s\n\nRunning 100%% silently in background with active Watchdog protection.\n%s", empName, empKey, machName, svcNote)
 	showMsgBox("Installation Successful", msg)
 }

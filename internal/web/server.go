@@ -24,6 +24,7 @@ import (
 	"github.com/monitoring-agent/agent/internal/config"
 	"github.com/monitoring-agent/agent/internal/controller"
 	"github.com/monitoring-agent/agent/internal/models"
+	"github.com/monitoring-agent/agent/internal/services/input"
 )
 
 //go:embed static/*
@@ -336,7 +337,7 @@ func (s *WebServer) buildTelemetryPayload() SystemTelemetry {
 	inp, err := s.ctl.GetCurrentInputState()
 	if err == nil && inp != nil {
 		tele.UserIdleMs = inp.IdleTimeSec * 1000
-		tele.IsUserIdle = inp.IdleTimeSec >= 60
+		tele.IsUserIdle = inp.IdleTimeSec >= int64(input.IdleThreshold/time.Second)
 	}
 
 	return tele

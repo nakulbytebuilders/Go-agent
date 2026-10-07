@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"runtime/debug"
 	"syscall"
 	"time"
 
@@ -79,6 +80,17 @@ func main() {
 		fmt.Printf("Fatal: failed to initialize AgentController: %v\n", err)
 		os.Exit(1)
 	}
+
+	// If anything below panics, make sure the dashboard shows *why* this
+	// machine suddenly went quiet instead of just "offline" — report it
+	// before re-panicking so the watchdog's restart still happens exactly
+	// as before.
+	defer func() {
+		if r := recover(); r != nil {
+			ctl.ReportCrash(r, debug.Stack())
+			panic(r)
+		}
+	}()
 
 	// Start all enabled services
 	ctl.StartEnabledServices()

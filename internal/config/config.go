@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 
 	"gopkg.in/yaml.v3"
 )
@@ -186,4 +187,73 @@ func SaveConfig(configPath string, cfg *Config) error {
 	}
 
 	return nil
+}
+
+// ReadServerCredentials re-reads just the enrollment fields from the config
+// file on disk, without disturbing anything a caller already has loaded in
+// memory. Used to notice that a sibling process sharing this same config
+// file — the boot service and the user-session agent both read/write the
+// same agent.yaml — already enrolled, so the caller can reuse that instead
+// of registering a second device with the backend.
+func ReadServerCredentials(configPath string) (agentID, apiKey string) {
+	cfg, err := LoadConfig(configPath)
+	if err != nil {
+		return "", ""
+	}
+	return cfg.Server.AgentID, cfg.Server.APIKey
+}
+
+// UpdateServerCredentials persists a freshly issued agent_id/api_key into the
+// YAML config file on disk, guarded by a small cross-process lock, so the
+// next process that loads this file reuses the same enrollment instead of
+// enrolling a second device. It is a no-op if credentials are already
+// present on disk (first writer wins).
+func UpdateServerCredentials(configPath, agentID, apiKey string) error {
+	if configPath == "" || agentID == "" || apiKey == "" {
+		return fmt.Errorf("configPath, agentID and apiKey are all required")
+	}
+
+	unlock, err := lockConfigFile(configPath)
+	if err != nil {
+		return err
+	}
+	defer unlock()
+
+	cfg, err := LoadConfig(configPath)
+	if err != nil {
+		return err
+	}
+	if cfg.Server.AgentID != "" && cfg.Server.APIKey != "" {
+		// A sibling process (or an earlier run) already persisted
+		// credentials while we were enrolling; leave them as-is.
+		return nil
+	}
+
+	cfg.Server.AgentID = agentID
+	cfg.Server.APIKey = apiKey
+	return SaveConfig(configPath, cfg)
+}
+
+// lockConfigFile is a minimal, dependency-free advisory lock: it creates a
+// sidecar ".lock" file exclusively and removes it on unlock. It exists only
+// to serialize the rare read-modify-write of enrollment credentials between
+// the boot service and the user-session agent, not for general concurrent
+// access to the config file. A lock older than the wait deadline is assumed
+// to be left behind by a process that crashed and is ignored, so a stuck
+// lock file can never wedge enrollment forever.
+func lockConfigFile(configPath string) (unlock func(), err error) {
+	lockPath := configPath + ".lock"
+	deadline := time.Now().Add(5 * time.Second)
+
+	for {
+		f, err := os.OpenFile(lockPath, os.O_CREATE|os.O_EXCL|os.O_RDWR, 0644)
+		if err == nil {
+			_ = f.Close()
+			return func() { _ = os.Remove(lockPath) }, nil
+		}
+		if time.Now().After(deadline) {
+			return func() {}, nil
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
 }

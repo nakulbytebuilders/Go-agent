@@ -1,9 +1,9 @@
 server:
-  api_url: "http://127.0.0.1:9898/api"
-  agent_id: "e865b763-1018-4f3a-bdc6-313fdda28ac5"
-  api_key: "54295aae-b6e1-41eb-ac3f-ab824121e1f5"
+  api_url: "https://monitor-cloudd.test/api"
+  agent_id: ""
+  api_key: ""
   heartbeat_interval_sec: 5
-  employee_id: "nakul@gmail.com"
+  employee_id: "c2faf012-0081-4cfd-9892-68abd4ecda95"
   machine_name: "BYTE_BUILDERS"
 
 web_server:

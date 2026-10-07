@@ -2,11 +2,16 @@
 
 package input
 
+import "time"
+
 type InputSnapshot struct {
 	Keypresses    int64
 	MouseClicks   int64
 	MouseMoveDist float64
 	IdleTimeSec   int64
+	// LastInput stays zero: there is no input signal on this platform, so idle
+	// time is never reported.
+	LastInput time.Time
 }
 
 type NativeInputTracker struct{}

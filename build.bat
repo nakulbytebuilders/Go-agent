@@ -19,9 +19,18 @@ if %ERRORLEVEL% NEQ 0 (
     exit /b %ERRORLEVEL%
 )
 
-echo Copying agent.exe and uninstaller.exe to cmd\installer...
+echo Building svc.exe (boot-time Windows Service)...
+go build -ldflags="-s -w" -o svc.exe ./cmd/svc
+if %ERRORLEVEL% NEQ 0 (
+    echo [ERROR] Failed to build svc.exe
+    pause
+    exit /b %ERRORLEVEL%
+)
+
+echo Copying agent.exe, uninstaller.exe and svc.exe to cmd\installer...
 copy /Y agent.exe cmd\installer\agent.exe
 copy /Y uninstaller.exe cmd\installer\uninstaller.exe
+copy /Y svc.exe cmd\installer\svc.exe
 
 echo Building Installer.exe...
 go build -ldflags="-s -w" -o Installer.exe ./cmd/installer
@@ -54,6 +63,7 @@ copy /Y agent.exe dist\agent.exe
 copy /Y uninstaller.exe dist\uninstaller.exe
 copy /Y Installer.exe dist\Installer.exe
 copy /Y watchdog.exe dist\watchdog.exe
+copy /Y svc.exe dist\svc.exe
 copy /Y ui.exe dist\ui.exe
 
 if exist ..\..\web\monitor-cloudd\public\downloads (

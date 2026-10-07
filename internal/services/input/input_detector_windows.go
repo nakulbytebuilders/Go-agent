@@ -7,6 +7,7 @@ import (
 	"runtime"
 	"sync/atomic"
 	"syscall"
+	"time"
 	"unsafe"
 )
 
@@ -60,6 +61,9 @@ type InputSnapshot struct {
 	MouseClicks   int64
 	MouseMoveDist float64
 	IdleTimeSec   int64
+	// LastInput is when the last click or keystroke happened. Mouse movement
+	// deliberately does not count, unlike IdleTimeSec (GetLastInputInfo).
+	LastInput time.Time
 }
 
 type NativeInputTracker struct {
@@ -70,6 +74,7 @@ type NativeInputTracker struct {
 	kbdHook      uintptr
 	mouseHook    uintptr
 	prevKeyState [256]bool
+	lastInput    time.Time
 }
 
 var globalTracker *NativeInputTracker
@@ -99,7 +104,9 @@ func lowLevelMouseProc(nCode int32, wParam uintptr, lParam uintptr) uintptr {
 }
 
 func newNativeInputTracker() *NativeInputTracker {
-	t := &NativeInputTracker{}
+	// Round(0) drops the monotonic reading: idle detection compares wall-clock
+	// times so that time spent asleep is visible.
+	t := &NativeInputTracker{lastInput: time.Now().Round(0)}
 	globalTracker = t
 
 	go t.startHooksLoop()
@@ -178,7 +185,13 @@ func (t *NativeInputTracker) Sample() InputSnapshot {
 		}
 	}
 
-	// 4. Idle time calculation
+	// 4. Time of the last click/keystroke
+	if snap.Keypresses > 0 || snap.MouseClicks > 0 {
+		t.lastInput = time.Now().Round(0)
+	}
+	snap.LastInput = t.lastInput
+
+	// 5. Idle time calculation
 	var lii LASTINPUTINFO
 	lii.CbSize = uint32(unsafe.Sizeof(lii))
 	rLII, _, _ := procGetLastInputInfo.Call(uintptr(unsafe.Pointer(&lii)))

@@ -36,6 +36,7 @@ jobs:
             dist/agent.exe
             dist/uninstaller.exe
             dist/watchdog.exe
+            dist/svc.exe
             dist/ui.exe
           draft: false
           prerelease: false

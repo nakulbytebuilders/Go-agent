@@ -96,6 +96,15 @@ type InputActivity struct {
 	CreatedAt     time.Time `json:"created_at" db:"created_at"`
 }
 
+// IdlePeriod is a stretch of time the user was idle (no click or keystroke for
+// the idle threshold, reported as neutral hours) or away (screen locked,
+// reported as away hours).
+type IdlePeriod struct {
+	Name      string    `json:"name"` // "idle" or "locked"
+	StartTime time.Time `json:"start_time"`
+	EndTime   time.Time `json:"end_time"`
+}
+
 type SyncQueueItem struct {
 	ID          int64     `json:"id" db:"id"`
 	PayloadType string    `json:"payload_type" db:"payload_type"` // app, browser, screenshot, input

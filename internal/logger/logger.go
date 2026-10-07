@@ -15,6 +15,7 @@ type LoggerManager struct {
 	WatchdogLogger *slog.Logger
 	SyncLogger     *slog.Logger
 	ErrorLogger    *slog.Logger
+	BootLogger     *slog.Logger
 }
 
 var globalManager *LoggerManager
@@ -79,6 +80,9 @@ func Init(cfg config.LoggerConfig) (*LoggerManager, error) {
 		WatchdogLogger: createFileOnlyLogger("watchdog.log"),
 		SyncLogger:     createFileOnlyLogger("sync.log"),
 		ErrorLogger:    createFileOnlyLogger("error.log"),
+		// BootLogger is file-only (no stdout multiwriter): the boot service
+		// runs headless under the SCM with no console to write to.
+		BootLogger: createFileOnlyLogger("boot.log"),
 	}
 
 	globalManager = lm
@@ -111,6 +115,13 @@ func GetSyncLogger() *slog.Logger {
 func GetErrorLogger() *slog.Logger {
 	if globalManager != nil {
 		return globalManager.ErrorLogger
+	}
+	return slog.Default()
+}
+
+func GetBootLogger() *slog.Logger {
+	if globalManager != nil {
+		return globalManager.BootLogger
 	}
 	return slog.Default()
 }

@@ -10,6 +10,7 @@ import (
 	"time"
 	"unsafe"
 
+	"golang.org/x/sys/windows"
 	"golang.org/x/sys/windows/registry"
 )
 
@@ -19,6 +20,35 @@ func showMsgBox(title, text string) {
 	titlePtr, _ := syscall.UTF16PtrFromString(title)
 	textPtr, _ := syscall.UTF16PtrFromString(text)
 	procMessageBoxW.Call(0, uintptr(unsafe.Pointer(textPtr)), uintptr(unsafe.Pointer(titlePtr)), 0)
+}
+
+// relaunchElevatedIfNeeded re-runs this uninstaller with a UAC prompt and
+// exits the current, non-elevated process. Removing WinSentinelBootSvc (a
+// LocalSystem Windows Service) requires admin rights, unlike the rest of
+// this uninstaller's HKCU/%APPDATA% cleanup. The temp-copy relaunch below
+// inherits this process's token, so this only ever needs to run once.
+func relaunchElevatedIfNeeded() {
+	if windows.GetCurrentProcessToken().IsElevated() {
+		return
+	}
+
+	exePath, err := os.Executable()
+	if err != nil {
+		return
+	}
+
+	verbPtr, _ := syscall.UTF16PtrFromString("runas")
+	exePtr, _ := syscall.UTF16PtrFromString(exePath)
+	argPtr, _ := syscall.UTF16PtrFromString(strings.Join(os.Args[1:], " "))
+	cwd, _ := os.Getwd()
+	cwdPtr, _ := syscall.UTF16PtrFromString(cwd)
+
+	if err := windows.ShellExecute(0, verbPtr, exePtr, argPtr, cwdPtr, 1); err != nil {
+		showMsgBox("Administrator Rights Required", fmt.Sprintf(
+			"WinSentinel needs to run as Administrator to fully uninstall its boot-time service.\n\nPlease right-click the uninstaller and choose \"Run as administrator\".\n\n(%v)", err))
+		os.Exit(1)
+	}
+	os.Exit(0)
 }
 
 func deleteRegistryKey(root registry.Key, path string, viewFlags uint32) error {
@@ -46,6 +76,8 @@ func deleteRegistryValue(root registry.Key, path string, valueName string, viewF
 }
 
 func main() {
+	relaunchElevatedIfNeeded()
+
 	exePath, err := os.Executable()
 	if err != nil {
 		exePath = ""
@@ -88,6 +120,19 @@ func main() {
 			}
 		}
 	}
+
+	// 0. Stop and remove the boot-time Windows Service, if installed. This
+	// has to happen before anything else: it's a LocalSystem service that
+	// keeps itself running independent of the HKCU Run keys removed below,
+	// so it would otherwise be the one thing left behind.
+	if appDataDir := os.Getenv("APPDATA"); appDataDir != "" {
+		svcPath := filepath.Join(appDataDir, "MonitoringAgent", "svc.exe")
+		if _, err := os.Stat(svcPath); err == nil {
+			_ = exec.Command(svcPath, "-uninstall").Run()
+		}
+	}
+	_ = exec.Command("sc", "stop", "WinSentinelBootSvc").Run()
+	_ = exec.Command("sc", "delete", "WinSentinelBootSvc").Run()
 
 	// 1. Stop background processes (Watchdog FIRST to prevent agent resurrection)
 	_ = exec.Command("taskkill", "/F", "/T", "/IM", "watchdog.exe").Run()

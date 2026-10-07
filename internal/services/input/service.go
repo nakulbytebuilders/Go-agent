@@ -24,6 +24,7 @@ type InputService struct {
 	cancel        context.CancelFunc
 
 	tracker       *NativeInputTracker
+	presence      *presenceTracker
 	intervalStart time.Time
 
 	// Current accumulators
@@ -63,6 +64,7 @@ func (s *InputService) Start(ctx context.Context) error {
 	s.state = services.StateRunning
 
 	s.intervalStart = time.Now()
+	s.presence = newPresenceTracker(IdleThreshold, time.Now().Round(0))
 	s.accumKeypresses = 0
 	s.accumClicks = 0
 	s.accumDistance = 0
@@ -90,6 +92,9 @@ func (s *InputService) Stop(ctx context.Context) error {
 	}
 
 	s.flushIntervalLocked(ctx)
+	if s.presence != nil {
+		s.enqueuePeriodsLocked(ctx, s.presence.close(time.Now().Round(0)))
+	}
 
 	s.state = services.StateStopped
 	s.mu.Unlock()
@@ -166,6 +171,9 @@ func (s *InputService) runLoop(ctx context.Context) {
 	flushTicker := time.NewTicker(time.Duration(flushIntervalSec) * time.Second)
 	defer flushTicker.Stop()
 
+	presenceTicker := time.NewTicker(presenceTick)
+	defer presenceTicker.Stop()
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -176,6 +184,41 @@ func (s *InputService) runLoop(ctx context.Context) {
 			s.mu.Lock()
 			s.flushIntervalLocked(ctx)
 			s.mu.Unlock()
+		case <-presenceTicker.C:
+			// Asked before taking the lock: on Linux/macOS this may spawn a process.
+			locked := isScreenLocked()
+			s.mu.Lock()
+			s.observePresenceLocked(ctx, time.Now().Round(0), locked)
+			s.mu.Unlock()
+		}
+	}
+}
+
+// observePresenceLocked feeds the idle/locked tracker and queues whatever
+// periods it reports for sync to the cloud.
+func (s *InputService) observePresenceLocked(ctx context.Context, now time.Time, locked bool) {
+	if s.state != services.StateRunning || s.presence == nil {
+		return
+	}
+	s.enqueuePeriodsLocked(ctx, s.presence.observe(now, locked))
+}
+
+func (s *InputService) enqueuePeriodsLocked(ctx context.Context, periods []models.IdlePeriod) {
+	if s.db == nil {
+		return
+	}
+	for _, period := range periods {
+		payload, err := json.Marshal(period)
+		if err != nil {
+			continue
+		}
+		_, err = s.db.InsertQueue(ctx, &models.SyncQueueItem{
+			PayloadType: "idle",
+			PayloadJSON: string(payload),
+			Status:      "pending",
+		})
+		if err != nil {
+			s.log.Error("Failed to queue idle period", "name", period.Name, "error", err)
 		}
 	}
 }
@@ -193,6 +236,9 @@ func (s *InputService) sampleInput() {
 	s.accumClicks += snap.MouseClicks
 	s.accumDistance += snap.MouseMoveDist
 	s.lastIdleTime = snap.IdleTimeSec
+	if s.presence != nil && !snap.LastInput.IsZero() {
+		s.presence.noteInput(snap.LastInput)
+	}
 
 	s.ssKeypresses += snap.Keypresses
 	s.ssClicks += snap.MouseClicks

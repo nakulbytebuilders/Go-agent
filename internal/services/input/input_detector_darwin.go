@@ -15,11 +15,15 @@ import (
 // cursor position without cgo + an Accessibility/Input Monitoring grant, so
 // (like the Linux implementation) Keypresses/MouseClicks/MouseMoveDist stay
 // at 0 - only IdleTimeSec (a real signal from IOHIDSystem) is populated.
+//
+// Because clicks and keystrokes cannot be seen here, LastInput is derived from
+// the idle counter, which any input (including mouse movement) resets.
 type InputSnapshot struct {
 	Keypresses    int64
 	MouseClicks   int64
 	MouseMoveDist float64
 	IdleTimeSec   int64
+	LastInput     time.Time
 }
 
 // NativeInputTracker shells out to `ioreg` for idle time. That's an
@@ -29,6 +33,7 @@ type NativeInputTracker struct {
 	mu          sync.Mutex
 	lastSample  time.Time
 	lastIdleSec int64
+	lastInput   time.Time
 }
 
 const darwinSampleThrottle = 500 * time.Millisecond
@@ -43,12 +48,14 @@ func (t *NativeInputTracker) Sample() InputSnapshot {
 
 	now := time.Now()
 	if !t.lastSample.IsZero() && now.Sub(t.lastSample) < darwinSampleThrottle {
-		return InputSnapshot{IdleTimeSec: t.lastIdleSec}
+		return InputSnapshot{IdleTimeSec: t.lastIdleSec, LastInput: t.lastInput}
 	}
 	t.lastSample = now
 	t.lastIdleSec = idleTimeSec()
+	// Round(0) drops the monotonic reading so sleep shows up as a wall-clock gap.
+	t.lastInput = now.Round(0).Add(-time.Duration(t.lastIdleSec) * time.Second)
 
-	return InputSnapshot{IdleTimeSec: t.lastIdleSec}
+	return InputSnapshot{IdleTimeSec: t.lastIdleSec, LastInput: t.lastInput}
 }
 
 // idleTimeSec reads HIDIdleTime (nanoseconds since last user input, reset by

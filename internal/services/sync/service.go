@@ -34,6 +34,34 @@ type SyncService struct {
 	httpClient    *http.Client
 	lastSyncTime  time.Time
 	lastSyncCount int
+
+	// configPath, when set, is the YAML file this service's ServerConfig was
+	// loaded from. It lets enrollment be shared across processes that point
+	// at the same config file (the boot service and the user-session
+	// agent): whichever enrolls first persists agent_id/api_key here, and
+	// the other picks them up instead of registering a second device.
+	configPath string
+
+	// issueMu/issueLastSent throttle ReportIssue/ReportFailure so a problem
+	// that keeps recurring (e.g. the server being unreachable for an hour)
+	// produces one dashboard row per issueReportThrottle window instead of
+	// one every sync tick. Keyed by issue code; independent of mu, which
+	// guards the sync loop's own state and is sometimes already held by the
+	// caller when these are invoked (see ReportIssue).
+	issueMu       sync.Mutex
+	issueLastSent map[string]time.Time
+}
+
+// issueReportThrottle is how often the same issue code is allowed to create
+// a new row on the dashboard while it keeps happening.
+const issueReportThrottle = 10 * time.Minute
+
+// SetConfigPath records the YAML config file this service's credentials
+// should be persisted to and re-read from. See configPath.
+func (s *SyncService) SetConfigPath(path string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.configPath = path
 }
 
 func NewSyncService(db *database.DatabaseManager, cfg config.SyncConfig, serverCfg config.ServerConfig, log *slog.Logger) *SyncService {
@@ -185,6 +213,18 @@ func (s *SyncService) enrollAgentIfNeeded(ctx context.Context) error {
 		return nil
 	}
 
+	// A sibling process sharing this config file (the boot service, or an
+	// earlier run of this same agent) may have already enrolled. Reuse
+	// those credentials instead of registering a second device.
+	if s.configPath != "" {
+		if agentID, apiKey := config.ReadServerCredentials(s.configPath); agentID != "" && apiKey != "" {
+			s.serverCfg.AgentID = agentID
+			s.serverCfg.APIKey = apiKey
+			s.log.Info("Reusing enrollment persisted by another process", "agent_id", agentID)
+			return nil
+		}
+	}
+
 	apiURL := strings.TrimSuffix(s.serverCfg.APIURL, "/")
 	if apiURL == "" {
 		apiURL = "http://monitor-cloudd.test/api"
@@ -231,6 +271,12 @@ func (s *SyncService) enrollAgentIfNeeded(ctx context.Context) error {
 	s.serverCfg.APIKey = res.APIKey
 	s.log.Info("Enrolled successfully with monitor-cloudd backend", "agent_id", res.AgentID, "employee_name", res.EmployeeName)
 
+	if s.configPath != "" {
+		if err := config.UpdateServerCredentials(s.configPath, res.AgentID, res.APIKey); err != nil {
+			s.log.Warn("Failed to persist enrollment to config file", "error", err)
+		}
+	}
+
 	return nil
 }
 
@@ -270,6 +316,7 @@ func (s *SyncService) processSyncBatchLocked(ctx context.Context) (int, error) {
 				err := s.uploadScreenshotToCloud(ctx, item)
 				if err != nil {
 					s.log.Error("Screenshot upload to monitor-cloudd failed", "error", err)
+					s.ReportFailure("warning", "screenshot upload", err)
 					if item.ID > 0 && (strings.Contains(err.Error(), "failed to read screenshot file") || strings.Contains(err.Error(), "no such file") || strings.Contains(err.Error(), "cannot find the file")) {
 						_ = s.db.UpdateQueueStatus(ctx, item.ID, "failed_missing_file", err.Error())
 					}
@@ -294,6 +341,7 @@ func (s *SyncService) processSyncBatchLocked(ctx context.Context) (int, error) {
 		err := s.sendBatchToCloud(ctx, batchItems)
 		if err != nil {
 			s.log.Error("Batch sync to monitor-cloudd failed", "error", err)
+			s.ReportFailure("error", "batch sync", err)
 		} else {
 			for _, item := range batchItems {
 				if item.ID > 0 {
@@ -317,6 +365,7 @@ func (s *SyncService) sendBatchToCloud(ctx context.Context, items []models.SyncQ
 
 	activities := make([]map[string]interface{}, 0)
 	metrics := make([]map[string]interface{}, 0)
+	idleActivities := make([]map[string]interface{}, 0)
 
 	nowStr := time.Now().Format(time.RFC3339)
 
@@ -401,6 +450,19 @@ func (s *SyncService) sendBatchToCloud(ctx context.Context, items []models.SyncQ
 				"durationSeconds": durSec,
 				"formattedTime":   formattedTime,
 			})
+		} else if pType == "idle" {
+			name, _ := payload["name"].(string)
+			startTime, _ := payload["start_time"].(string)
+			endTime, _ := payload["end_time"].(string)
+			if name == "" || startTime == "" || endTime == "" {
+				continue
+			}
+
+			idleActivities = append(idleActivities, map[string]interface{}{
+				"name":       name,
+				"start_time": startTime,
+				"end_time":   endTime,
+			})
 		} else {
 			metrics = append(metrics, map[string]interface{}{
 				"timestamp": nowStr,
@@ -410,8 +472,9 @@ func (s *SyncService) sendBatchToCloud(ctx context.Context, items []models.SyncQ
 	}
 
 	batchPayload := map[string]interface{}{
-		"activities": activities,
-		"metrics":    metrics,
+		"activities":      activities,
+		"metrics":         metrics,
+		"idle_activities": idleActivities,
 	}
 
 	bodyBytes, _ := json.Marshal(batchPayload)
@@ -558,6 +621,136 @@ type PolicyResponse struct {
 	Timezone           string `json:"timezone"`
 }
 
+// issueThrottled reports whether code was already reported within the last
+// issueReportThrottle window, and if not, marks it as reported now.
+func (s *SyncService) issueThrottled(code string) bool {
+	s.issueMu.Lock()
+	defer s.issueMu.Unlock()
+	if s.issueLastSent == nil {
+		s.issueLastSent = make(map[string]time.Time)
+	}
+	if last, ok := s.issueLastSent[code]; ok && time.Since(last) < issueReportThrottle {
+		return true
+	}
+	s.issueLastSent[code] = time.Now()
+	return false
+}
+
+// classifyError turns a raw Go error from an HTTP call this service made
+// into a short, stable "kind" tag plus a plain-language hint a non-technical
+// person can act on. It only ever inspects the error's text, so it works
+// for both errors this file wraps with status codes and plain network
+// errors from the HTTP client.
+func classifyError(err error) (kind, hint string) {
+	msg := strings.ToLower(err.Error())
+	switch {
+	case strings.Contains(msg, "status 401") || strings.Contains(msg, "status 403") || strings.Contains(msg, "unauthorized"):
+		return "AUTH_FAILED", "The server rejected this device's saved credentials (invalid or revoked API key). Reinstall the agent on this machine to re-enroll it."
+	case strings.Contains(msg, "no such host") || strings.Contains(msg, "dial tcp") || strings.Contains(msg, "connection refused") ||
+		strings.Contains(msg, "timeout") || strings.Contains(msg, "context deadline exceeded") || strings.Contains(msg, "tls"):
+		return "UNREACHABLE", "This machine could not reach the monitor-cloudd server. Check its internet connection and that the server URL in agent.yaml is correct."
+	case strings.Contains(msg, "status 5"):
+		return "SERVER_ERROR", "The monitor-cloudd server itself returned an error. This is usually temporary; if it keeps happening, check the server."
+	case strings.Contains(msg, "no such file") || strings.Contains(msg, "cannot find the file") || strings.Contains(msg, "failed to read screenshot file"):
+		return "FILE_MISSING", "A local file this agent needed (e.g. a screenshot) was missing or deleted before it could be uploaded."
+	default:
+		return "UNKNOWN", "See the error text above for details."
+	}
+}
+
+// ReportFailure classifies a raw error from a sync/enrollment/policy
+// operation into a plain-language issue and reports it (see ReportIssue).
+// op names the operation that failed (e.g. "fetch policy", "batch sync")
+// and is folded into both the message and the throttling code, so e.g. a
+// network outage during policy fetch and one during batch sync are reported
+// (and throttled) separately.
+func (s *SyncService) ReportFailure(severity, op string, err error) {
+	if err == nil {
+		return
+	}
+	kind, hint := classifyError(err)
+	code := kind + "_" + strings.ToUpper(strings.ReplaceAll(op, " ", "_"))
+	message := fmt.Sprintf("%s failed: %s. %s", op, err.Error(), hint)
+	s.ReportIssue(severity, code, message, map[string]interface{}{"operation": op, "error": err.Error()})
+}
+
+// ReportIssue tells the monitor-cloudd dashboard about a problem this agent
+// hit, in plain language, so the owner can see *why* a machine looks wrong
+// without remoting into it. It always logs locally first — so the local log
+// still has it even if the HTTP call fails or the device isn't enrolled yet
+// — then fires the report in its own goroutine with a short timeout, so it
+// never blocks the caller (which may be holding mu).
+//
+// code is a short, stable machine-readable tag (e.g. "SYNC_AUTH_FAILED")
+// used both to throttle repeats and, on the dashboard, to look up a
+// suggested fix. message is the human-readable sentence shown as-is.
+func (s *SyncService) ReportIssue(severity, code, message string, extra map[string]interface{}) {
+	if s.issueThrottled(code) {
+		return
+	}
+	s.log.Error("Issue detected", "severity", severity, "code", code, "message", message, "context", extra)
+
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+		defer cancel()
+		if err := s.sendIssueReport(ctx, severity, code, message, extra); err != nil {
+			s.log.Warn("Failed to deliver issue report to dashboard (it is still in the local log)", "error", err, "code", code)
+		}
+	}()
+}
+
+// ReportIssueSync is ReportIssue's blocking twin: it delivers the report
+// before returning instead of in a background goroutine. Use it only when
+// the caller is about to exit (e.g. a recovered panic) and a fire-and-forget
+// goroutine might never get to run before the process dies.
+func (s *SyncService) ReportIssueSync(ctx context.Context, severity, code, message string, extra map[string]interface{}) error {
+	if s.issueThrottled(code) {
+		return nil
+	}
+	s.log.Error("Issue detected", "severity", severity, "code", code, "message", message, "context", extra)
+	return s.sendIssueReport(ctx, severity, code, message, extra)
+}
+
+func (s *SyncService) sendIssueReport(ctx context.Context, severity, code, message string, extra map[string]interface{}) error {
+	agentID := s.serverCfg.AgentID
+	apiKey := s.serverCfg.APIKey
+	if agentID == "" || apiKey == "" {
+		// Not enrolled yet — there is no device identity to attach this
+		// report to on the server, so the local log line above is all we
+		// can do for now.
+		return nil
+	}
+
+	apiURL := strings.TrimSuffix(s.serverCfg.APIURL, "/")
+	issueURL := fmt.Sprintf("%s/agents/%s/issues", apiURL, agentID)
+
+	bodyBytes, _ := json.Marshal(map[string]interface{}{
+		"severity": severity,
+		"code":     code,
+		"message":  message,
+		"context":  extra,
+	})
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, issueURL, bytes.NewBuffer(bodyBytes))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", apiKey))
+
+	resp, err := s.httpClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 300 {
+		respBody, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("dashboard rejected issue report with status %d: %s", resp.StatusCode, string(respBody))
+	}
+	return nil
+}
+
 func (s *SyncService) FetchPolicy(ctx context.Context) (*PolicyResponse, error) {
 	if s.serverCfg.AgentID == "" || s.serverCfg.APIKey == "" {
 		if err := s.enrollAgentIfNeeded(ctx); err != nil {
@@ -580,18 +773,24 @@ func (s *SyncService) FetchPolicy(ctx context.Context) (*PolicyResponse, error) 
 
 	resp, err := s.httpClient.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("policy fetch failed: %w", err)
+		wrapped := fmt.Errorf("policy fetch failed: %w", err)
+		s.ReportFailure("error", "fetch policy", wrapped)
+		return nil, wrapped
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		bodyBytes, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("policy fetch returned status %d: %s", resp.StatusCode, string(bodyBytes))
+		wrapped := fmt.Errorf("policy fetch returned status %d: %s", resp.StatusCode, string(bodyBytes))
+		s.ReportFailure("error", "fetch policy", wrapped)
+		return nil, wrapped
 	}
 
 	var policy PolicyResponse
 	if err := json.NewDecoder(resp.Body).Decode(&policy); err != nil {
-		return nil, fmt.Errorf("failed to decode policy response: %w", err)
+		wrapped := fmt.Errorf("failed to decode policy response: %w", err)
+		s.ReportFailure("error", "fetch policy", wrapped)
+		return nil, wrapped
 	}
 
 	s.log.Info("Fetched server policy",

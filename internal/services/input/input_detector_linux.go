@@ -16,11 +16,15 @@ import (
 // membership of the `input` group to read /dev/input/event*), so
 // Keypresses/MouseClicks are left at 0 here rather than faking numbers.
 // Idle time (via xprintidle) and mouse movement distance are real signals.
+//
+// Because clicks and keystrokes cannot be seen here, LastInput is derived from
+// the idle counter, which any input (including mouse movement) resets.
 type InputSnapshot struct {
 	Keypresses    int64
 	MouseClicks   int64
 	MouseMoveDist float64
 	IdleTimeSec   int64
+	LastInput     time.Time
 }
 
 // NativeInputTracker polls xdotool/xprintidle. Both are external processes,
@@ -33,6 +37,7 @@ type NativeInputTracker struct {
 	hasLastPos   bool
 	lastSample   time.Time
 	lastIdleSec  int64
+	lastInput    time.Time
 }
 
 const linuxSampleThrottle = 500 * time.Millisecond
@@ -49,7 +54,7 @@ func (t *NativeInputTracker) Sample() InputSnapshot {
 	if !t.lastSample.IsZero() && now.Sub(t.lastSample) < linuxSampleThrottle {
 		// Too soon since the last real sample: report no new movement but
 		// keep returning the last known idle time so callers still see it.
-		return InputSnapshot{IdleTimeSec: t.lastIdleSec}
+		return InputSnapshot{IdleTimeSec: t.lastIdleSec, LastInput: t.lastInput}
 	}
 	t.lastSample = now
 
@@ -65,12 +70,15 @@ func (t *NativeInputTracker) Sample() InputSnapshot {
 	}
 
 	t.lastIdleSec = idleTimeSec()
+	// Round(0) drops the monotonic reading so sleep shows up as a wall-clock gap.
+	t.lastInput = now.Round(0).Add(-time.Duration(t.lastIdleSec) * time.Second)
 
 	return InputSnapshot{
 		Keypresses:    0,
 		MouseClicks:   0,
 		MouseMoveDist: moveDist,
 		IdleTimeSec:   t.lastIdleSec,
+		LastInput:     t.lastInput,
 	}
 }
 

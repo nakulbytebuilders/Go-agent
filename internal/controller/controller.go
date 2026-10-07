@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"path/filepath"
 	"sync"
 	"time"
 
@@ -24,6 +25,7 @@ import (
 type AgentController struct {
 	mu             sync.Mutex
 	cfg            *config.Config
+	configPath     string
 	db             *database.DatabaseManager
 	loggerManager  *logger.LoggerManager
 	log            *slog.Logger
@@ -36,6 +38,14 @@ func NewAgentController(configPath string) (*AgentController, error) {
 	cfg, err := config.LoadConfig(configPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load configuration: %w", err)
+	}
+
+	// Resolve to an absolute path so it names the same file regardless of
+	// which process's working directory it was passed relative to — the
+	// boot service (cmd/svc) points at the same agent.yaml and needs to
+	// agree on its identity for shared enrollment (see SetConfigPath).
+	if abs, err := filepath.Abs(configPath); err == nil {
+		configPath = abs
 	}
 
 	lm, err := logger.Init(cfg.Logger)
@@ -57,6 +67,7 @@ func NewAgentController(configPath string) (*AgentController, error) {
 
 	ctl := &AgentController{
 		cfg:            cfg,
+		configPath:     configPath,
 		db:             db,
 		loggerManager:  lm,
 		log:            agentLog,
@@ -79,6 +90,9 @@ func (c *AgentController) registerServices() error {
 	ssSvc := screenshot.NewScreenshotService(c.db, c.cfg.Screenshot, c.log, inputSvc)
 	queueSvc := queue.NewQueueService(c.db, c.log)
 	syncSvc := syncservice.NewSyncService(c.db, c.cfg.Sync, c.cfg.Server, logger.GetSyncLogger())
+	if c.configPath != "" {
+		syncSvc.SetConfigPath(c.configPath)
+	}
 
 	if err := c.serviceManager.Register(appSvc); err != nil {
 		return err
@@ -204,6 +218,31 @@ func (c *AgentController) applyServerPolicy(ctx context.Context) {
 
 func (c *AgentController) GetConfig() *config.Config {
 	return c.cfg
+}
+
+// ReportCrash logs a recovered panic and best-effort reports it to the
+// monitor-cloudd dashboard as a critical issue, so "the agent just went
+// quiet" has a visible, plain-language reason instead of silence. Call it
+// from a deferred recover() at the top of main() — see cmd/agent/main.go —
+// before the process is allowed to actually exit, since the panic almost
+// certainly means it's about to.
+func (c *AgentController) ReportCrash(recovered interface{}, stack []byte) {
+	c.log.Error("Agent recovered from panic", "panic", fmt.Sprintf("%v", recovered), "stack", string(stack))
+
+	svc, ok := c.serviceManager.GetService("sync")
+	if !ok {
+		return
+	}
+	syncSvc, ok := svc.(*syncservice.SyncService)
+	if !ok {
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_ = syncSvc.ReportIssueSync(ctx, "critical", "AGENT_CRASHED",
+		fmt.Sprintf("The agent process crashed unexpectedly and had to restart: %v", recovered),
+		map[string]interface{}{"stack": string(stack)})
 }
 
 func (c *AgentController) StartService(name string) error {
