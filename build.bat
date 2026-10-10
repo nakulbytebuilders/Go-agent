@@ -67,13 +67,25 @@ copy /Y watchdog.exe dist\watchdog.exe
 copy /Y svc.exe dist\svc.exe
 copy /Y ui.exe dist\ui.exe
 
+echo.
+echo Writing agent-manifest.json (the version agent.exe reports + its SHA-256)...
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\write-agent-manifest.ps1 -Agent agent.exe -Out dist\agent-manifest.json
+if %ERRORLEVEL% NEQ 0 (
+    echo [ERROR] Failed to write agent-manifest.json
+    pause
+    exit /b %ERRORLEVEL%
+)
+
+rem The web server announces updates from agent-manifest.json, so it always travels with agent.exe.
 if exist ..\..\web\monitor-cloudd\public\downloads (
     copy /Y agent.exe ..\..\web\monitor-cloudd\public\downloads\agent.exe
+    copy /Y dist\agent-manifest.json ..\..\web\monitor-cloudd\public\downloads\agent-manifest.json
     copy /Y uninstaller.exe ..\..\web\monitor-cloudd\public\downloads\uninstaller.exe
     copy /Y Installer.exe ..\..\web\monitor-cloudd\public\downloads\Installer.exe
 )
 if exist C:\Projects\web\monitor-cloudd\public\downloads (
     copy /Y agent.exe C:\Projects\web\monitor-cloudd\public\downloads\agent.exe
+    copy /Y dist\agent-manifest.json C:\Projects\web\monitor-cloudd\public\downloads\agent-manifest.json
     copy /Y uninstaller.exe C:\Projects\web\monitor-cloudd\public\downloads\uninstaller.exe
     copy /Y Installer.exe C:\Projects\web\monitor-cloudd\public\downloads\Installer.exe
 )

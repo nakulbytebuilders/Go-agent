@@ -42,6 +42,11 @@ type SyncService struct {
 	// the other picks them up instead of registering a second device.
 	configPath string
 
+	// agentVersion, when set, is sent with every authenticated request so the
+	// dashboard can show which version of the agent runs on each machine. It is
+	// set once, before the service starts, and left empty by the boot service.
+	agentVersion string
+
 	// issueMu/issueLastSent throttle ReportIssue/ReportFailure so a problem
 	// that keeps recurring (e.g. the server being unreachable for an hour)
 	// produces one dashboard row per issueReportThrottle window instead of
@@ -62,6 +67,21 @@ func (s *SyncService) SetConfigPath(path string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.configPath = path
+}
+
+// SetAgentVersion makes this service report the agent version to the server
+// (the X-Agent-Version header). Call it before Start.
+func (s *SyncService) SetAgentVersion(version string) {
+	s.agentVersion = version
+}
+
+// authorize puts the device's credentials, and its version when it has one to
+// report, on a request to the server.
+func (s *SyncService) authorize(req *http.Request) {
+	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", s.serverCfg.APIKey))
+	if s.agentVersion != "" {
+		req.Header.Set("X-Agent-Version", s.agentVersion)
+	}
 }
 
 func NewSyncService(db *database.DatabaseManager, cfg config.SyncConfig, serverCfg config.ServerConfig, log *slog.Logger) *SyncService {
@@ -416,7 +436,8 @@ func (s *SyncService) sendBatchToCloud(ctx context.Context, items []models.SyncQ
 				"formattedTime":   formattedTime,
 			})
 		} else if pType == "browser" || pType == "browser_activity" {
-			domain := "Google"
+			// Empty when the agent could not tell the site; do not invent one.
+			domain := ""
 			if val, ok := payload["domain"].(string); ok && val != "" {
 				domain = val
 			} else if val, ok := payload["Domain"].(string); ok && val != "" {
@@ -445,8 +466,13 @@ func (s *SyncService) sendBatchToCloud(ctx context.Context, items []models.SyncQ
 			}
 
 			activities = append(activities, map[string]interface{}{
+				// Sent as a website rather than an app, so the cloud can map it by domain.
+				"type":            "web",
+				"browserName":     payloadString(payload, "browser_name", "BrowserName"),
+				"domain":          domain,
+				"url":             payloadString(payload, "url", "URL"),
 				"applicationName": "chrome.exe",
-				"windowTitle":     fmt.Sprintf("%s - %s", tabTitle, domain),
+				"windowTitle":     browserWindowTitle(tabTitle, domain),
 				"durationSeconds": durSec,
 				"formattedTime":   formattedTime,
 			})
@@ -485,7 +511,7 @@ func (s *SyncService) sendBatchToCloud(ctx context.Context, items []models.SyncQ
 		return err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", s.serverCfg.APIKey))
+	s.authorize(req)
 
 	resp, err := s.httpClient.Do(req)
 	if err != nil {
@@ -501,6 +527,25 @@ func (s *SyncService) sendBatchToCloud(ctx context.Context, items []models.SyncQ
 	s.log.Info("Successfully sent batch sync to cloud", "activities_count", len(activities), "metrics_count", len(metrics))
 
 	return nil
+}
+
+// browserWindowTitle is "<tab title> - <domain>", or just the tab title when
+// the agent could not tell which site the tab is on.
+func browserWindowTitle(tabTitle, domain string) string {
+	if domain == "" {
+		return tabTitle
+	}
+	return fmt.Sprintf("%s - %s", tabTitle, domain)
+}
+
+// payloadString returns the first non-empty string stored under one of keys.
+func payloadString(payload map[string]interface{}, keys ...string) string {
+	for _, key := range keys {
+		if val, ok := payload[key].(string); ok && val != "" {
+			return val
+		}
+	}
+	return ""
 }
 
 func (s *SyncService) uploadScreenshotToCloud(ctx context.Context, item models.SyncQueueItem) error {
@@ -583,7 +628,7 @@ func (s *SyncService) uploadScreenshotToCloud(ctx context.Context, item models.S
 		return err
 	}
 	req.Header.Set("Content-Type", writer.FormDataContentType())
-	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", s.serverCfg.APIKey))
+	s.authorize(req)
 
 	resp, err := s.httpClient.Do(req)
 	if err != nil {
@@ -619,6 +664,7 @@ type PolicyResponse struct {
 	WorkHoursStart     string `json:"workHoursStart"`
 	WorkHoursEnd       string `json:"workHoursEnd"`
 	Timezone           string `json:"timezone"`
+	PausedReason       string `json:"pausedReason"`
 }
 
 // issueThrottled reports whether code was already reported within the last
@@ -769,7 +815,7 @@ func (s *SyncService) FetchPolicy(ctx context.Context) (*PolicyResponse, error) 
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", s.serverCfg.APIKey))
+	s.authorize(req)
 
 	resp, err := s.httpClient.Do(req)
 	if err != nil {

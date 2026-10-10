@@ -38,6 +38,7 @@ jobs:
             dist/watchdog.exe
             dist/svc.exe
             dist/ui.exe
+            dist/agent-manifest.json
           draft: false
           prerelease: false
 

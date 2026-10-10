@@ -48,3 +48,32 @@ func TestConfigLoadAndSave(t *testing.T) {
 		t.Errorf("Expected APIURL 'https://custom.api.com', got '%s'", reloaded.Server.APIURL)
 	}
 }
+
+func TestSkipTLSVerifyIsOnlyTheDefaultForDevelopmentHosts(t *testing.T) {
+	yes, no := true, false
+
+	cases := []struct {
+		name string
+		cfg  config.ServerConfig
+		want bool
+	}{
+		{"public host is verified", config.ServerConfig{APIURL: "https://monitor.example.com/api"}, false},
+		{"public host with a port is verified", config.ServerConfig{APIURL: "https://monitor.example.com:8443/api"}, false},
+		{"LAN address is verified", config.ServerConfig{APIURL: "https://192.168.1.20/api"}, false},
+		{"a name merely containing 'test' is verified", config.ServerConfig{APIURL: "https://attest.example.com/api"}, false},
+		{"empty URL is verified", config.ServerConfig{}, false},
+		{"localhost is a dev host", config.ServerConfig{APIURL: "https://localhost:8000/api"}, true},
+		{"loopback address is a dev host", config.ServerConfig{APIURL: "http://127.0.0.1:8000/api"}, true},
+		{"ipv6 loopback is a dev host", config.ServerConfig{APIURL: "https://[::1]/api"}, true},
+		{".test is a dev host", config.ServerConfig{APIURL: "https://monitor-cloudd.test/api"}, true},
+		{".local is a dev host", config.ServerConfig{APIURL: "https://monitor.local/api"}, true},
+		{"explicit true wins on a public host", config.ServerConfig{APIURL: "https://monitor.example.com/api", InsecureSkipVerify: &yes}, true},
+		{"explicit false wins on a dev host", config.ServerConfig{APIURL: "https://monitor-cloudd.test/api", InsecureSkipVerify: &no}, false},
+	}
+
+	for _, c := range cases {
+		if got := c.cfg.SkipTLSVerify(); got != c.want {
+			t.Errorf("%s: SkipTLSVerify() = %v, want %v", c.name, got, c.want)
+		}
+	}
+}

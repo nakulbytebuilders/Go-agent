@@ -191,8 +191,19 @@ func (s *ScreenshotService) TakeScreenshot(ctx context.Context) (*models.Screens
 		}
 	}
 
-	s.log.Info("Screenshot captured successfully", "file", filePath, "width", w, "height", h, "size", fileSize)
+	s.log.Info("Screenshot captured successfully", "file", filePath, "width", w, "height", h, "size", fileSize,
+		"keys", keyPressCount, "clicks", mouseClickCount)
 	return rec, nil
+}
+
+// discardInputCounts empties the per-screenshot keystroke and click counters.
+func (s *ScreenshotService) discardInputCounts() {
+	if s.inputSvc == nil {
+		return
+	}
+	if tracker, ok := s.inputSvc.(interface{ GetAndResetScreenshotMetrics() (int64, int64) }); ok {
+		tracker.GetAndResetScreenshotMetrics()
+	}
 }
 
 func (s *ScreenshotService) runLoop(ctx context.Context) {
@@ -221,6 +232,9 @@ func (s *ScreenshotService) runLoop(ctx context.Context) {
 			if isEnabled {
 				_, _ = s.TakeScreenshot(ctx)
 			} else {
+				// Input keeps being counted while capture is off. Drop it, or the
+				// next screenshot would report everything typed in the meantime.
+				s.discardInputCounts()
 				s.log.Debug("Screenshot capture skipped (disabled by server policy)")
 			}
 		}

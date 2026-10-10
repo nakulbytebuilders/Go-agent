@@ -88,3 +88,49 @@ func TestSyncService(t *testing.T) {
 		t.Fatalf("failed to stop sync service: %v", err)
 	}
 }
+
+func TestSendBatchToCloudSendsBrowserActivityAsWebsite(t *testing.T) {
+	var body struct {
+		Activities []map[string]interface{} `json:"activities"`
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Errorf("invalid JSON body: %v", err)
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	svc := NewSyncService(nil, config.SyncConfig{}, config.ServerConfig{
+		APIURL:  server.URL + "/api",
+		AgentID: "agent-1",
+		APIKey:  "key",
+	}, slog.New(slog.NewJSONHandler(os.Stdout, nil)))
+
+	items := []models.SyncQueueItem{
+		{PayloadType: "browser", PayloadJSON: `{"browser_name":"Chrome","tab_title":"Inbox","domain":"mail.google.com","url":"https://mail.google.com/mail/u/0/","duration_sec":42,"start_time":"2026-09-19T10:00:00+05:30"}`},
+	}
+	if err := svc.sendBatchToCloud(context.Background(), items); err != nil {
+		t.Fatalf("sendBatchToCloud failed: %v", err)
+	}
+
+	if len(body.Activities) != 1 {
+		t.Fatalf("expected one activity, got %+v", body.Activities)
+	}
+	act := body.Activities[0]
+	if act["type"] != "web" || act["domain"] != "mail.google.com" || act["browserName"] != "Chrome" || act["url"] != "https://mail.google.com/mail/u/0/" {
+		t.Fatalf("browser activity must carry type, domain, browserName and url, got %+v", act)
+	}
+	if act["durationSeconds"] != float64(42) || act["formattedTime"] != "2026-09-19T10:00:00+05:30" {
+		t.Fatalf("duration and start time must be passed through, got %+v", act)
+	}
+}
+
+func TestBrowserWindowTitleOmitsAnUnknownDomain(t *testing.T) {
+	if got := browserWindowTitle("Inbox", "mail.google.com"); got != "Inbox - mail.google.com" {
+		t.Errorf("got %q", got)
+	}
+	if got := browserWindowTitle("Log in", ""); got != "Log in" {
+		t.Errorf("an unknown domain must not leave a dangling separator, got %q", got)
+	}
+}

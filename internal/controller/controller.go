@@ -20,6 +20,7 @@ import (
 	"github.com/monitoring-agent/agent/internal/services/queue"
 	"github.com/monitoring-agent/agent/internal/services/screenshot"
 	syncservice "github.com/monitoring-agent/agent/internal/services/sync"
+	"github.com/monitoring-agent/agent/internal/services/updater"
 )
 
 type AgentController struct {
@@ -32,6 +33,9 @@ type AgentController struct {
 	serviceManager *manager.ServiceManager
 	ctx            context.Context
 	cancel         context.CancelFunc
+
+	// lastPolicyState fingerprints the last applied server policy (guarded by mu).
+	lastPolicyState string
 }
 
 func NewAgentController(configPath string) (*AgentController, error) {
@@ -90,6 +94,10 @@ func (c *AgentController) registerServices() error {
 	ssSvc := screenshot.NewScreenshotService(c.db, c.cfg.Screenshot, c.log, inputSvc)
 	queueSvc := queue.NewQueueService(c.db, c.log)
 	syncSvc := syncservice.NewSyncService(c.db, c.cfg.Sync, c.cfg.Server, logger.GetSyncLogger())
+	// Only this user-session agent reports its version. The boot service shares
+	// the sync code but is a separate binary that auto-update does not replace,
+	// so it must not overwrite the agent's version on the dashboard.
+	syncSvc.SetAgentVersion(updater.CurrentVersion)
 	if c.configPath != "" {
 		syncSvc.SetConfigPath(c.configPath)
 	}
@@ -145,6 +153,11 @@ func (c *AgentController) StartEnabledServices() {
 	go c.runPolicyPoller(c.ctx)
 }
 
+// policyPollInterval is how often the agent re-checks the server policy.
+// Policy changes (tracking on/off, working hours) take at most this long
+// to reach the machine.
+const policyPollInterval = 30 * time.Second
+
 func (c *AgentController) runPolicyPoller(ctx context.Context) {
 	select {
 	case <-ctx.Done():
@@ -152,11 +165,11 @@ func (c *AgentController) runPolicyPoller(ctx context.Context) {
 	case <-time.After(2 * time.Second):
 	}
 
-	c.log.Info("Policy poller started — polling server Configuration every 5 seconds")
+	c.log.Info("Policy poller started — polling server Configuration", "interval", policyPollInterval)
 
 	c.applyServerPolicy(ctx)
 
-	ticker := time.NewTicker(5 * time.Second)
+	ticker := time.NewTicker(policyPollInterval)
 	defer ticker.Stop()
 
 	for {
@@ -208,16 +221,42 @@ func (c *AgentController) applyServerPolicy(ctx context.Context) {
 		}
 	}
 
-	c.log.Info("Server policy applied successfully",
-		"tracking_enabled", policy.Enabled,
-		"capture_screenshots", policy.CaptureScreenshots,
-		"blur_screenshots", policy.BlurScreenshots,
-		"interval_sec", policy.IntervalMs/1000,
-	)
+	// Log only when the effective policy changes, so a stable policy does
+	// not flood the log on every poll.
+	state := fmt.Sprintf("%t|%t|%t|%d|%s", policy.Enabled, policy.CaptureScreenshots,
+		policy.BlurScreenshots, policy.IntervalMs/1000, policy.PausedReason)
+	c.mu.Lock()
+	changed := state != c.lastPolicyState
+	c.lastPolicyState = state
+	c.mu.Unlock()
+
+	if changed {
+		c.log.Info("Server policy applied successfully",
+			"tracking_enabled", policy.Enabled,
+			"capture_screenshots", policy.CaptureScreenshots,
+			"blur_screenshots", policy.BlurScreenshots,
+			"interval_sec", policy.IntervalMs/1000,
+			"paused_reason", policy.PausedReason,
+		)
+	}
 }
 
 func (c *AgentController) GetConfig() *config.Config {
 	return c.cfg
+}
+
+// ReportIssue sends a problem to the monitor-cloudd dashboard through the sync
+// service (see SyncService.ReportIssue). It does nothing if sync is not set up.
+func (c *AgentController) ReportIssue(severity, code, message string, extra map[string]interface{}) {
+	svc, ok := c.serviceManager.GetService("sync")
+	if !ok {
+		return
+	}
+	syncSvc, ok := svc.(*syncservice.SyncService)
+	if !ok {
+		return
+	}
+	syncSvc.ReportIssue(severity, code, message, extra)
 }
 
 // ReportCrash logs a recovered panic and best-effort reports it to the

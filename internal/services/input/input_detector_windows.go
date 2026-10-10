@@ -167,22 +167,35 @@ func (t *NativeInputTracker) Sample() InputSnapshot {
 	snap.Keypresses = hookKeys
 	snap.MouseClicks = hookClicks
 
-	// 3. Fallback VK polling if hooks produced 0
-	if hookKeys == 0 && hookClicks == 0 {
-		mouseVKs := map[int]bool{0x01: true, 0x02: true, 0x04: true, 0x05: true, 0x06: true}
-		for vk := 1; vk < 256; vk++ {
-			r, _, _ := procGetAsyncKeyState.Call(uintptr(vk))
-			val := uint16(r)
-			isPressed := (val & 0x8000) != 0
-			if isPressed && !t.prevKeyState[vk] {
-				if mouseVKs[vk] {
-					snap.MouseClicks++
-				} else {
-					snap.Keypresses++
-				}
-			}
-			t.prevKeyState[vk] = isPressed
+	// 3. Poll the key state every sample too and keep whichever count is
+	// higher. The hook sees every press, so it normally wins. The poll only
+	// matters when the hook is blind or gone: Windows drops a slow low-level
+	// hook without telling anyone, and a hook in a normal process never sees
+	// input going to an elevated window. Adding the two together instead would
+	// count every press twice, since a press outlasts one 100ms sample.
+	// The generic Shift/Ctrl/Alt codes are skipped because their left/right
+	// variants are polled as well and would count each modifier twice.
+	var pollKeys, pollClicks int64
+	for vk := 1; vk < 256; vk++ {
+		if vk == 0x10 || vk == 0x11 || vk == 0x12 {
+			continue
 		}
+		r, _, _ := procGetAsyncKeyState.Call(uintptr(vk))
+		isPressed := (uint16(r) & 0x8000) != 0
+		if isPressed && !t.prevKeyState[vk] {
+			if vk == 0x01 || vk == 0x02 || vk == 0x04 || vk == 0x05 || vk == 0x06 {
+				pollClicks++
+			} else {
+				pollKeys++
+			}
+		}
+		t.prevKeyState[vk] = isPressed
+	}
+	if pollKeys > snap.Keypresses {
+		snap.Keypresses = pollKeys
+	}
+	if pollClicks > snap.MouseClicks {
+		snap.MouseClicks = pollClicks
 	}
 
 	// 4. Time of the last click/keystroke

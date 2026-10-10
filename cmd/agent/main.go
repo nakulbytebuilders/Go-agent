@@ -32,7 +32,15 @@ func main() {
 	install := flag.Bool("install", false, "Register agent to auto-start on Windows login")
 	uninstall := flag.Bool("uninstall", false, "Remove agent from Windows auto-start")
 	status := flag.Bool("status", false, "Check if agent is registered for auto-start")
+	showVersion := flag.Bool("version", false, "Print the agent version and exit")
 	flag.Parse()
+
+	// The updater runs a downloaded agent with -version to check it really is
+	// the version the server offered, before replacing this one with it.
+	if *showVersion {
+		fmt.Println(updater.CurrentVersion)
+		os.Exit(0)
+	}
 
 	// Handle auto-start commands
 	if *install {
@@ -96,11 +104,12 @@ func main() {
 	ctl.StartEnabledServices()
 
 	// Start auto-updater service (checks every 1 hour)
-	apiURL := ctl.GetConfig().Server.APIURL
-	if apiURL == "" {
-		apiURL = "http://monitor-cloudd.test/api"
+	serverCfg := ctl.GetConfig().Server
+	if serverCfg.APIURL == "" {
+		serverCfg.APIURL = "http://monitor-cloudd.test/api"
 	}
-	updaterSvc := updater.NewUpdaterService(apiURL, *configPath)
+	updaterSvc := updater.NewUpdaterService(serverCfg.APIURL, *configPath, serverCfg.SkipTLSVerify())
+	updaterSvc.SetIssueReporter(ctl.ReportIssue)
 	go updaterSvc.StartUpdateLoop(context.Background(), 1*time.Hour)
 
 	// Start embedded browser-based web dashboard & REST API server

@@ -2,8 +2,11 @@ package config
 
 import (
 	"fmt"
+	"net"
+	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -36,6 +39,46 @@ type ServerConfig struct {
 	APIKey               string `yaml:"api_key"`
 	EmployeeID           string `yaml:"employee_id"`
 	MachineName          string `yaml:"machine_name"`
+
+	// InsecureSkipVerify, when set, decides outright whether the server's HTTPS
+	// certificate is left unchecked (true) or verified (false). Unset, it is
+	// verified unless the server is on a development host (see SkipTLSVerify).
+	InsecureSkipVerify *bool `yaml:"insecure_skip_verify,omitempty"`
+}
+
+// SkipTLSVerify reports whether this agent should leave the server's HTTPS
+// certificate unchecked.
+//
+// A certificate nobody checks lets anyone on the path pose as the server, so
+// the default is to check it. The exception is a server on a development host
+// (localhost, a loopback address, or a .test/.localhost/.local name), where a
+// self-signed certificate is normal and there is no public name to impersonate.
+func (s ServerConfig) SkipTLSVerify() bool {
+	if s.InsecureSkipVerify != nil {
+		return *s.InsecureSkipVerify
+	}
+	return isDevelopmentHost(s.APIURL)
+}
+
+func isDevelopmentHost(apiURL string) bool {
+	u, err := url.Parse(apiURL)
+	if err != nil {
+		return false
+	}
+
+	host := strings.ToLower(u.Hostname())
+	if host == "localhost" {
+		return true
+	}
+	if ip := net.ParseIP(host); ip != nil {
+		return ip.IsLoopback()
+	}
+	for _, suffix := range []string{".test", ".localhost", ".local"} {
+		if strings.HasSuffix(host, suffix) {
+			return true
+		}
+	}
+	return false
 }
 
 type DatabaseConfig struct {

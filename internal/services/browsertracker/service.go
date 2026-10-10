@@ -26,6 +26,18 @@ type BrowserTrackerService struct {
 	// Active browser session state
 	currentBrowser ActiveBrowserInfo
 	sessionStart   time.Time
+	lastPoll       time.Time
+}
+
+// maxPollGap is the longest silence between two polls that still counts as
+// normal. A longer one means the machine slept or the process froze, and that
+// time must not be added to whichever page was active before it.
+func maxPollGap(pollIntervalSec int) time.Duration {
+	gap := 30 * time.Second
+	if scaled := time.Duration(pollIntervalSec) * 5 * time.Second; scaled > gap {
+		gap = scaled
+	}
+	return gap
 }
 
 func NewBrowserTrackerService(db *database.DatabaseManager, cfg config.BrowserTrackerConfig, log *slog.Logger) *BrowserTrackerService {
@@ -55,7 +67,9 @@ func (s *BrowserTrackerService) Start(ctx context.Context) error {
 	// Initialize active session info
 	info, _ := getActiveBrowserInfo()
 	s.currentBrowser = info
-	s.sessionStart = time.Now()
+	// Round(0) drops the monotonic reading so that time spent asleep is visible.
+	s.sessionStart = time.Now().Round(0)
+	s.lastPoll = s.sessionStart
 
 	s.mu.Unlock()
 
@@ -183,7 +197,21 @@ func (s *BrowserTrackerService) pollActiveBrowser(ctx context.Context) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	now := time.Now()
+	now := time.Now().Round(0)
+
+	// After a sleep or freeze, close the old segment where the last poll saw it
+	// instead of at "now", and start over from now.
+	if !s.lastPoll.IsZero() && now.Sub(s.lastPoll) > maxPollGap(s.cfg.PollIntervalSec) {
+		if s.currentBrowser.IsBrowser {
+			s.flushUntilLocked(ctx, s.lastPoll)
+		}
+		s.currentBrowser = info
+		s.sessionStart = now
+		s.lastPoll = now
+		return
+	}
+	s.lastPoll = now
+
 	// Check if active browser, tab title, domain changed, OR if 10 seconds elapsed in current session
 	if info.IsBrowser != s.currentBrowser.IsBrowser ||
 		info.BrowserName != s.currentBrowser.BrowserName ||
@@ -207,7 +235,12 @@ func (s *BrowserTrackerService) pollActiveBrowser(ctx context.Context) {
 }
 
 func (s *BrowserTrackerService) flushCurrentActivityLocked(ctx context.Context) {
-	now := time.Now()
+	s.flushUntilLocked(ctx, time.Now().Round(0))
+}
+
+// flushUntilLocked records the current segment as ending at end.
+func (s *BrowserTrackerService) flushUntilLocked(ctx context.Context, end time.Time) {
+	now := end
 	durationSec := int64(now.Sub(s.sessionStart).Seconds())
 
 	if durationSec > 0 && s.currentBrowser.IsBrowser && s.db != nil {

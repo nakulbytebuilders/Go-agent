@@ -20,6 +20,25 @@ type LoggerManager struct {
 
 var globalManager *LoggerManager
 
+// bestEffortWriter forwards to w and never reports a failure.
+type bestEffortWriter struct{ w io.Writer }
+
+func (b bestEffortWriter) Write(p []byte) (int, error) {
+	_, _ = b.w.Write(p)
+	return len(p), nil
+}
+
+// newTeeWriter writes to the log file and, when there is one, to the console.
+//
+// agent.exe is built as a Windows GUI program, so when the Run key or the
+// watchdog starts it there is no console and every write to os.Stdout fails.
+// io.MultiWriter stops at the first writer that fails, so with stdout first the
+// file never received a line: agent.log stayed empty after every reboot. The
+// file comes first, and a console that is missing cannot fail the write.
+func newTeeWriter(file io.Writer, console io.Writer) io.Writer {
+	return io.MultiWriter(file, bestEffortWriter{console})
+}
+
 func Init(cfg config.LoggerConfig) (*LoggerManager, error) {
 	logDir := cfg.Dir
 	if logDir == "" {
@@ -50,13 +69,10 @@ func Init(cfg config.LoggerConfig) (*LoggerManager, error) {
 			Compress:   cfg.Compress,
 		}
 
-		// Also write to stdout in debug mode or default console output
-		multiWriter := io.MultiWriter(os.Stdout, rotator)
-
 		handlerOpts := &slog.HandlerOptions{
 			Level: level,
 		}
-		handler := slog.NewJSONHandler(multiWriter, handlerOpts)
+		handler := slog.NewJSONHandler(newTeeWriter(rotator, os.Stdout), handlerOpts)
 		return slog.New(handler)
 	}
 

@@ -98,7 +98,7 @@ func getActiveBrowserInfo() (ActiveBrowserInfo, error) {
 
 func parseBrowserTitle(title string, browserName string) (tabTitle string, domain string, rawURL string) {
 	if title == "" {
-		return "New Tab", "New Tab", ""
+		return "New Tab", "", ""
 	}
 
 	// Strip trailing browser suffix e.g. " - Google Chrome", " — Mozilla Firefox"
@@ -131,7 +131,8 @@ func parseBrowserTitle(title string, browserName string) (tabTitle string, domai
 	// Extract domain from title or known website patterns
 	domain = extractDomainFromTitle(cleanedTitle)
 
-	return cleanedTitle, domain, "https://" + domain
+	// The window title never carries the address, so there is no real URL here.
+	return cleanedTitle, domain, ""
 }
 
 func extractDomainFromTitle(title string) string {
@@ -181,14 +182,10 @@ func extractDomainFromTitle(title string) string {
 	case strings.Contains(lower, "wikipedia"):
 		return "wikipedia.org"
 	case strings.Contains(lower, "new tab"):
-		return "New Tab"
+		return ""
 	default:
-		if len(words) > 0 {
-			firstWord := strings.Trim(words[0], " .,;")
-			if len(firstWord) > 2 {
-				return firstWord + ".com"
-			}
-		}
-		return "web-browsing"
+		// Not a site we can recognise from its title. Say so instead of inventing
+		// a domain from the first word ("Log in - ..." is not log.com).
+		return ""
 	}
 }
